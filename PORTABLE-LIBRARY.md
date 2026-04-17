@@ -68,6 +68,11 @@ When the user adds tracks, the app **copies** the audio file into `Music/` befor
 - Duplicate filenames: append a counter suffix (`Track (2).mp3`)
 - Large files: show progress (can be async with a Task)
 
+
+WHen the user deletes tracks, the app copy of the track is moved to the trash.
+
+The library view also shows the total disk space free.
+
 ---
 
 ## Required Code Changes
@@ -141,7 +146,7 @@ Since the app is signed with your Apple Developer certificate, it runs on any Ma
 
 ---
 
-## Out of Scope (for now)
+## Out of Scope
 
 - Conflict resolution if the same library folder is opened on two machines simultaneously
 - Syncing changes back (two-way merge) — the intended workflow is one active machine at a time

@@ -111,3 +111,12 @@
 - Sort ignoring leading "The" in title and album
 - Drag onto New Playlist creates playlist with dropped tracks
 - Drag target highlight feedback on playlist sidebar items
+
+## Phase 6: Refactoring (Complete)
+
+### 6.1 Shared Utilities
+- Extracted `clamped(to:)` to a shared `extension Comparable` in `Utilities.swift` (was duplicated as private extensions in `AudioEngineManager` and `MainPlaybackController`)
+- Extracted time formatting to `TimeInterval.mmss()` in `Utilities.swift` (was duplicated as private `formatTime`/`formatDuration`/`formatCueTime` methods in `PlayerView`, `PlaylistWindowView`, `TrackMetadataEditorView`, and `TrackRow`)
+
+### 6.2 Shared TrackInfoView Component
+- Added `TrackInfoView` (artwork + title/artist label) to replace repeated HStack/VStack layout in `PlayerView` (main section, preview section) and `PlaylistWindowView` (performance controls)

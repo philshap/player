@@ -30,12 +30,6 @@ struct PlaylistWindowView: View {
         Group {
             if let playlist {
                 playlistContent(playlist)
-            } else {
-                ContentUnavailableView(
-                    "Playlist not found",
-                    systemImage: "music.note.list",
-                    description: Text("This playlist may have been deleted.")
-                )
             }
         }
         .frame(minWidth: 600, minHeight: 400)
@@ -54,8 +48,8 @@ struct PlaylistWindowView: View {
 
         NavigationStack {
             VStack(spacing: 0) {
-                if appState.isPerformanceMode {
-                    performanceControls(tracks: tracks)
+                if appState.isPerformanceMode && appState.performingPlaylistID == playlist.id {
+                    PerformanceControlsView()
                     Divider()
                 }
 
@@ -70,8 +64,19 @@ struct PlaylistWindowView: View {
                         trackList(tracks, playlist: playlist)
                     }
                 }
+
+                if !tracks.isEmpty {
+                    Divider()
+                    PlaylistStatsBar(tracks: tracks)
+                }
             }
-            .navigationTitle(playlist.name)
+            .navigationTitle(
+                playlist.name + " • " +
+                Duration.seconds(
+                    playlist.orderedTracks.map(\.duration).reduce(0, +)
+                )
+                .formatted(.time(pattern: .hourMinuteSecond))
+            )
             .toolbar {
                 toolbarContent(playlist)
             }
@@ -93,74 +98,13 @@ struct PlaylistWindowView: View {
         }
     }
 
-    // MARK: - Performance Controls
-
-    @ViewBuilder
-    private func performanceControls(tracks: [Track]) -> some View {
-        let main = appState.mainPlayback
-
-        VStack(spacing: 6) {
-            if let track = main.currentTrack {
-                Text("\(track.title) — \(track.artist)")
-                    .font(.headline)
-                    .lineLimit(1)
-            }
-
-            HStack(spacing: 6) {
-                Text(formatDuration(main.currentTime))
-                    .font(.caption)
-                    .monospacedDigit()
-                    .frame(width: 50, alignment: .trailing)
-
-                Slider(
-                    value: Binding(
-                        get: { main.currentTime },
-                        set: { main.seek(to: $0) }
-                    ),
-                    in: 0...max(main.duration, 0.01)
-                )
-
-                Text(formatDuration(main.duration))
-                    .font(.caption)
-                    .monospacedDigit()
-                    .frame(width: 50, alignment: .leading)
-            }
-
-            HStack(spacing: 20) {
-                Button { main.previousTrack() } label: {
-                    Image(systemName: "backward.fill").font(.title2)
-                }
-                .buttonStyle(.borderless)
-
-                Button { main.togglePlayPause() } label: {
-                    Image(systemName: main.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title)
-                }
-                .buttonStyle(.borderless)
-
-                Button { main.nextTrack() } label: {
-                    Image(systemName: "forward.fill").font(.title2)
-                }
-                .buttonStyle(.borderless)
-
-                Button { main.stop() } label: {
-                    Image(systemName: "stop.fill").font(.title2)
-                }
-                .buttonStyle(.borderless)
-            }
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(.orange.opacity(0.08))
-    }
-
     // MARK: - Track List
 
     @ViewBuilder
     private func trackList(_ tracks: [Track], playlist: Playlist) -> some View {
         List(selection: $selectedTrackID) {
             ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
-                PlaylistTrackRow(track: track, index: index, tracks: tracks)
+                PlaylistTrackRow(track: track, index: index, isCurrentlyPlaying: appState.mainPlayback.currentTrack?.id == track.id)
                     .draggable(TrackTransfer.encode(trackIDs: [track.id]))
                     .tag(track.id)
                     .contextMenu {
@@ -168,7 +112,6 @@ struct PlaylistWindowView: View {
                     }
             }
             .onMove { source, destination in
-                guard !appState.isPerformanceMode else { return }
                 guard let sourceIndex = source.first else { return }
                 let destIndex = destination > sourceIndex ? destination - 1 : destination
                 appState.playlistManager.moveTrack(
@@ -180,7 +123,6 @@ struct PlaylistWindowView: View {
             .onInsert(of: [.utf8PlainText]) { index, providers in
                 handleInsert(at: index, providers: providers, playlist: playlist)
             }
-            .moveDisabled(appState.isPerformanceMode)
         }
         .listStyle(.inset(alternatesRowBackgrounds: false))
     }
@@ -219,18 +161,33 @@ struct PlaylistWindowView: View {
         }
 
         Button("Load in Preview") {
-            try? appState.previewPlayback.load(track)
+            appState.previewPlayback.load(track)
         }
 
-        if !appState.isPerformanceMode {
+        if let cueIn = track.cuePointIn {
             Divider()
-            Button("Remove from Playlist", role: .destructive) {
-                appState.playlistManager.removeTrack(
-                    at: index,
-                    from: playlist,
-                    modelContext: modelContext
-                )
+            Button("Jump to Cue In (\(cueIn.mmss()))") {
+                if appState.mainPlayback.currentTrack?.id == track.id {
+                    appState.mainPlayback.seek(to: cueIn)
+                }
             }
+            .disabled(appState.mainPlayback.currentTrack?.id != track.id)
+        }
+
+        if track.cuePointIn != nil || track.cuePointOut != nil {
+            Button("Clear Cue Points") {
+                track.cuePointIn = nil
+                track.cuePointOut = nil
+            }
+        }
+
+        Divider()
+        Button("Remove from Playlist", role: .destructive) {
+            appState.playlistManager.removeTrack(
+                at: index,
+                from: playlist,
+                modelContext: modelContext
+            )
         }
     }
 
@@ -238,21 +195,25 @@ struct PlaylistWindowView: View {
 
     @ToolbarContentBuilder
     private func toolbarContent(_ playlist: Playlist) -> some ToolbarContent {
+        let isThisPerforming = appState.isPerformanceMode && appState.performingPlaylistID == playlist.id
+
         ToolbarItemGroup(placement: .primaryAction) {
             Button {
-                if appState.isPerformanceMode {
+                if isThisPerforming {
+                    appState.performingPlaylistID = nil
                     appState.mode = .curation
                 } else {
                     appState.mainPlayback.loadPlaylist(playlist)
+                    appState.performingPlaylistID = playlist.id
                     appState.mode = .performance
                 }
             } label: {
                 Label(
-                    appState.isPerformanceMode ? "Stop Performing" : "Perform",
-                    systemImage: appState.isPerformanceMode ? "stop.circle.fill" : "play.circle.fill"
+                    isThisPerforming ? "Stop Performing" : "Perform",
+                    systemImage: isThisPerforming ? "stop.circle.fill" : "play.circle.fill"
                 )
             }
-            .tint(appState.isPerformanceMode ? .orange : .accentColor)
+            .tint(isThisPerforming ? .orange : .accentColor)
 
             if !appState.isPerformanceMode {
                 Button {
@@ -309,42 +270,173 @@ struct PlaylistWindowView: View {
         isRenaming = false
     }
 
-    // MARK: - Helpers
-
-    private func formatDuration(_ seconds: TimeInterval) -> String {
-        guard seconds.isFinite && seconds >= 0 else { return "0:00" }
-        let totalSeconds = Int(seconds)
-        let m = totalSeconds / 60
-        let s = totalSeconds % 60
-        return String(format: "%d:%02d", m, s)
-    }
 }
 
-// MARK: - Isolated Track Row View
+// MARK: - Performance Controls (isolated observation)
 
-/// Separate View struct so that playback observation (currentTrack, currentTime)
-/// is isolated to each row. Updates to mainPlayback only re-render the affected
-/// row(s), not the entire List/ForEach — preventing drag session disruption.
-private struct PlaylistTrackRow: View {
-    let track: Track
-    let index: Int
-    let tracks: [Track]
-
+/// Isolated subview that observes `mainPlayback.currentTime` for the seek slider.
+/// Keeps this rapid observation out of the parent view so the List isn't disrupted.
+private struct PerformanceControlsView: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
         let main = appState.mainPlayback
-        let isCurrentlyPlaying = main.currentTrack?.id == track.id
-        let progress: Double = isCurrentlyPlaying && main.duration > 0
-            ? main.currentTime / main.duration
-            : 0
 
+        VStack(spacing: 6) {
+            if let track = main.currentTrack {
+                TrackInfoView(track: track, artworkSize: 40, titleFont: .headline)
+            }
+
+            HStack(spacing: 6) {
+                Text(main.currentTime.mmss())
+                    .font(.caption)
+                    .monospacedDigit()
+                    .frame(width: 50, alignment: .trailing)
+
+                Slider(
+                    value: Binding(
+                        get: { main.currentTime },
+                        set: { main.seek(to: $0) }
+                    ),
+                    in: 0...max(main.duration, 0.01)
+                )
+
+                Text(main.duration.mmss())
+                    .font(.caption)
+                    .monospacedDigit()
+                    .frame(width: 50, alignment: .leading)
+            }
+
+            HStack(spacing: 20) {
+                Button { main.previousTrack() } label: {
+                    Image(systemName: "backward.fill").font(.title2)
+                }
+                .buttonStyle(.borderless)
+                .help("Previous Track")
+
+                Button { main.seek(to: 0) } label: {
+                    Image(systemName: "arrow.counterclockwise").font(.title2)
+                }
+                .buttonStyle(.borderless)
+                .disabled(main.currentTrack == nil)
+                .help("Restart Track")
+
+                Button { main.togglePlayPause() } label: {
+                    Image(systemName: main.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.title)
+                }
+                .buttonStyle(.borderless)
+
+                Button { main.nextTrack() } label: {
+                    Image(systemName: "forward.fill").font(.title2)
+                }
+                .buttonStyle(.borderless)
+
+                Button { main.stop() } label: {
+                    Image(systemName: "stop.fill").font(.title2)
+                }
+                .buttonStyle(.borderless)
+
+                Spacer().frame(width: 8)
+
+                if main.isInGap {
+                    Text("Next in \(String(format: "%.0f", main.gapRemaining))s")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .monospacedDigit()
+
+                    Button("Skip") { main.nextTrack() }
+                        .font(.caption)
+                        .buttonStyle(.borderless)
+                } else {
+                    Picker("Gap", selection: Binding(
+                        get: { main.gapDuration },
+                        set: { main.gapDuration = $0 }
+                    )) {
+                        Text("No gap").tag(0.0 as TimeInterval)
+                        Text("1s").tag(1.0 as TimeInterval)
+                        Text("2s").tag(2.0 as TimeInterval)
+                        Text("3s").tag(3.0 as TimeInterval)
+                        Text("5s").tag(5.0 as TimeInterval)
+                    }
+                    .fixedSize()
+                }
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(.orange.opacity(0.08))
+    }
+
+}
+
+// MARK: - Playlist Statistics Bar
+
+private struct PlaylistStatsBar: View {
+    let tracks: [Track]
+
+    var body: some View {
+        let totalDuration = tracks.reduce(0) { $0 + $1.duration }
+        let bpms = tracks.compactMap(\.bpm).filter { $0 > 0 }
+        let ratings = tracks.map(\.rating).filter { $0 > 0 }
+        let neverPlayed = tracks.filter { $0.playCount == 0 }.count
+
+        HStack(spacing: 16) {
+            Label("\(tracks.count) tracks", systemImage: "music.note")
+
+            Label(
+                Duration.seconds(totalDuration)
+                    .formatted(.time(pattern: .hourMinuteSecond)),
+                systemImage: "clock"
+            )
+
+            if let minBPM = bpms.min(), let maxBPM = bpms.max() {
+                let avg = bpms.reduce(0, +) / Double(bpms.count)
+                if minBPM == maxBPM {
+                    Label("\(Int(minBPM)) BPM (avg: \(Int(avg)))", systemImage: "metronome")
+                } else {
+                    Label("\(Int(minBPM))–\(Int(maxBPM)) BPM (avg: \(Int(avg)))", systemImage: "metronome")
+                }
+            }
+
+            if !ratings.isEmpty {
+                let avg = Double(ratings.reduce(0, +)) / Double(ratings.count)
+                Label(String(format: "%.1f★", avg), systemImage: "star")
+            }
+
+            if neverPlayed > 0 {
+                Label(
+                    "\(neverPlayed) unplayed",
+                    systemImage: "sparkles"
+                )
+                .foregroundStyle(.orange)
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal)
+        .padding(.vertical, 4)
+    }
+}
+
+// MARK: - Track Row (no rapidly-changing observation)
+
+/// Row content that only observes `mainPlayback.currentTrack` (changes on track
+/// transitions, not every frame). The progress bar is in a separate subview.
+private struct PlaylistTrackRow: View {
+    let track: Track
+    let index: Int
+    let isCurrentlyPlaying: Bool
+
+    var body: some View {
         HStack(spacing: 8) {
             Text("\(index + 1)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(width: 24, alignment: .trailing)
                 .monospacedDigit()
+
+            TrackArtworkView(data: track.artworkData, size: 28)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(track.title)
@@ -392,36 +484,62 @@ private struct PlaylistTrackRow: View {
             }
             .frame(width: 40, alignment: .trailing)
 
-            Text(formatDuration(track.duration))
+            Text(track.duration.mmss())
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
                 .frame(width: 44, alignment: .trailing)
-        }
-        .padding(.vertical, 2)
-        .listRowBackground(
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    if isCurrentlyPlaying {
-                        Rectangle()
-                            .fill(Color.accentColor.opacity(0.2))
-                            .frame(width: geo.size.width * progress)
-                            .animation(.linear(duration: 0.1), value: progress)
 
-                        Color.accentColor.opacity(0.05)
-                    } else {
-                        Color.clear
+            if track.cuePointIn != nil || track.cuePointOut != nil {
+                HStack(spacing: 2) {
+                    if let cueIn = track.cuePointIn {
+                        Text("▶\(cueIn.mmss())")
+                            .font(.caption2)
+                            .foregroundStyle(.green)
+                    }
+                    if let cueOut = track.cuePointOut {
+                        Text("◼\(cueOut.mmss())")
+                            .font(.caption2)
+                            .foregroundStyle(.red)
                     }
                 }
+                .monospacedDigit()
+                .frame(width: 80, alignment: .trailing)
+            } else {
+                Spacer().frame(width: 80)
             }
-        )
+        }
+        .padding(.vertical, 2)
+        .background {
+            // Progress bar in isolated subview — only this re-renders on currentTime updates
+            TrackProgressBackground(trackID: track.id)
+        }
     }
 
-    private func formatDuration(_ seconds: TimeInterval) -> String {
-        guard seconds.isFinite && seconds >= 0 else { return "0:00" }
-        let totalSeconds = Int(seconds)
-        let m = totalSeconds / 60
-        let s = totalSeconds % 60
-        return String(format: "%d:%02d", m, s)
+}
+
+// MARK: - Progress Background (isolated observation)
+
+/// Sole observer of `mainPlayback.currentTime` — re-renders 20x/sec but only
+/// affects this tiny background view, not the row or the List.
+private struct TrackProgressBackground: View {
+    let trackID: UUID
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        let main = appState.mainPlayback
+        let isPlaying = main.currentTrack?.id == trackID
+
+        if isPlaying, main.duration > 0 {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Color.accentColor.opacity(0.05)
+                    Rectangle()
+                        .fill(Color.accentColor.opacity(0.2))
+                        .frame(width: geo.size.width * max(0, min(1, main.currentTime / main.duration)))
+                        .animation(.linear(duration: 0.1), value: main.currentTime)
+                }
+            }
+        }
     }
 }

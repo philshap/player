@@ -38,23 +38,33 @@ struct PlayerView: View {
 
     private var mainPlaybackSection: some View {
         let main = appState.mainPlayback
+        let engine  = appState.audioEngine
+        let isStereo = engine.mainOutputChannel == .both
 
         return VStack(spacing: 8) {
-            Label("Main Output (L)", systemImage: "speaker.wave.2.fill")
-                .font(.headline)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack {
+                Label(isStereo ? "Main Output (L+R)" : "Main Output (L)",
+                      systemImage: "speaker.wave.2.fill")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    engine.mainOutputChannel = isStereo ? .left : .both
+                } label: {
+                    Image(systemName: isStereo ? "speaker.2.fill" : "speaker.fill")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .focusable(false)
+                .help(isStereo ? "Switch to left channel only (mono-split cable mode)"
+                               : "Switch to stereo output (both channels)")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             // Track info
             if let track = main.currentTrack {
-                VStack(spacing: 2) {
-                    Text(track.title)
-                        .font(.title3)
-                        .fontWeight(.medium)
-                        .lineLimit(1)
-                    Text(track.artist)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                HStack {
+                    TrackInfoView(track: track, artworkSize: 52, titleFont: .title3)
+                    Spacer()
                 }
             } else {
                 Text("No track loaded")
@@ -63,7 +73,7 @@ struct PlayerView: View {
 
             // Seek bar
             HStack(spacing: 6) {
-                Text(formatTime(main.currentTime))
+                Text(main.currentTime.mmss())
                     .font(.caption)
                     .monospacedDigit()
                     .frame(width: 50, alignment: .trailing)
@@ -75,8 +85,9 @@ struct PlayerView: View {
                     ),
                     in: 0...max(main.duration, 0.01)
                 )
+                .focusable(false)
 
-                Text(formatTime(main.duration))
+                Text(main.duration.mmss())
                     .font(.caption)
                     .monospacedDigit()
                     .frame(width: 50, alignment: .leading)
@@ -89,24 +100,38 @@ struct PlayerView: View {
                         .font(.title2)
                 }
                 .buttonStyle(.borderless)
+                .focusable(false)
+                .help("Previous Track")
+
+                Button { main.seek(to: 0) } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.title2)
+                }
+                .buttonStyle(.borderless)
+                .focusable(false)
+                .disabled(main.currentTrack == nil)
+                .help("Restart Track")
 
                 Button { main.togglePlayPause() } label: {
                     Image(systemName: main.isPlaying ? "pause.fill" : "play.fill")
                         .font(.title2)
                 }
                 .buttonStyle(.borderless)
+                .focusable(false)
 
                 Button { main.nextTrack() } label: {
                     Image(systemName: "forward.fill")
                         .font(.title2)
                 }
                 .buttonStyle(.borderless)
+                .focusable(false)
 
                 Button { main.stop() } label: {
                     Image(systemName: "stop.fill")
                         .font(.title2)
                 }
                 .buttonStyle(.borderless)
+                .focusable(false)
             }
         }
     }
@@ -115,23 +140,33 @@ struct PlayerView: View {
 
     private var previewSection: some View {
         let preview = appState.previewPlayback
+        let engine  = appState.audioEngine
+        let isStereo = engine.previewOutputChannel == .both
 
         return VStack(spacing: 8) {
-            Label("Preview/Cue (R)", systemImage: "headphones")
-                .font(.headline)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack {
+                Label(isStereo ? "Preview/Cue (L+R)" : "Preview/Cue (R)",
+                      systemImage: "headphones")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    engine.previewOutputChannel = isStereo ? .right : .both
+                } label: {
+                    Image(systemName: isStereo ? "speaker.2.fill" : "speaker.fill")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .focusable(false)
+                .help(isStereo ? "Switch to right channel only (mono-split cable mode)"
+                               : "Switch to stereo output (both channels)")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             // Track info
             if let track = preview.currentTrack {
-                VStack(spacing: 2) {
-                    Text(track.title)
-                        .font(.title3)
-                        .fontWeight(.medium)
-                        .lineLimit(1)
-                    Text(track.artist)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                HStack {
+                    TrackInfoView(track: track, artworkSize: 52, titleFont: .title3)
+                    Spacer()
                 }
             } else {
                 Text("No track loaded")
@@ -140,7 +175,7 @@ struct PlayerView: View {
 
             // Seek bar
             HStack(spacing: 6) {
-                Text(formatTime(preview.currentTime))
+                Text(preview.currentTime.mmss())
                     .font(.caption)
                     .monospacedDigit()
                     .frame(width: 50, alignment: .trailing)
@@ -152,8 +187,9 @@ struct PlayerView: View {
                     ),
                     in: 0...max(preview.duration, 0.01)
                 )
+                .focusable(false)
 
-                Text(formatTime(preview.duration))
+                Text(preview.duration.mmss())
                     .font(.caption)
                     .monospacedDigit()
                     .frame(width: 50, alignment: .leading)
@@ -161,17 +197,19 @@ struct PlayerView: View {
 
             // Transport controls and volume
             HStack(spacing: 16) {
-                Button { try? preview.togglePlayPause() } label: {
+                Button { preview.togglePlayPause() } label: {
                     Image(systemName: preview.isPlaying ? "pause.fill" : "play.fill")
                         .font(.title2)
                 }
                 .buttonStyle(.borderless)
+                .focusable(false)
 
                 Button { preview.stop() } label: {
                     Image(systemName: "stop.fill")
                         .font(.title2)
                 }
                 .buttonStyle(.borderless)
+                .focusable(false)
 
                 Spacer()
 
@@ -188,6 +226,7 @@ struct PlayerView: View {
                         ),
                         in: 0...1
                     )
+                    .focusable(false)
                     .frame(width: 100)
 
                     Image(systemName: "speaker.wave.3.fill")
@@ -198,13 +237,4 @@ struct PlayerView: View {
         }
     }
 
-    // MARK: - Helpers
-
-    private func formatTime(_ time: TimeInterval) -> String {
-        guard time.isFinite && time >= 0 else { return "0:00" }
-        let totalSeconds = Int(time)
-        let minutes = totalSeconds / 60
-        let seconds = totalSeconds % 60
-        return String(format: "%d:%02d", minutes, seconds)
-    }
 }

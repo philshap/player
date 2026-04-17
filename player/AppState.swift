@@ -17,6 +17,10 @@ enum AppMode: String, CaseIterable {
 final class AppState {
     var mode: AppMode = .curation
 
+    /// The ID of the playlist currently loaded for performance playback.
+    /// Only the playlist window matching this ID shows the performance controls.
+    var performingPlaylistID: UUID? = nil
+
     let audioEngine: AudioEngineManager
     let mainPlayback: MainPlaybackController
     let previewPlayback: PreviewPlaybackController

@@ -22,7 +22,21 @@ struct playerApp: App {
         do {
             return try ModelContainer(for: schema, configurations: [configuration])
         } catch {
-            fatalError("Could not create ModelContainer: \(error)")
+            // Migration failed — delete the store and retry
+            print("[playerApp] ModelContainer creation failed, resetting store: \(error)")
+            let storeURL = configuration.url
+            let related = [
+                storeURL.appendingPathExtension("wal"),
+                storeURL.appendingPathExtension("shm"),
+            ]
+            for url in [storeURL] + related {
+                try? FileManager.default.removeItem(at: url)
+            }
+            do {
+                return try ModelContainer(for: schema, configurations: [configuration])
+            } catch {
+                fatalError("Could not create ModelContainer after reset: \(error)")
+            }
         }
     }()
 
@@ -50,14 +64,15 @@ struct playerApp: App {
         .modelContainer(sharedModelContainer)
 
         .commands {
+            // Window commands
             CommandGroup(after: .newItem) {
                 Button("Open Library") {
-                    openLibrary()
+                    openWindow(id: "library")
                 }
                 .keyboardShortcut("L", modifiers: [.command])
 
                 Button("Open Player") {
-                    openPlayer()
+                    openWindow(id: "player")
                 }
                 .keyboardShortcut("P", modifiers: [.command])
 
@@ -68,16 +83,70 @@ struct playerApp: App {
                 }
                 .keyboardShortcut("M", modifiers: [.command, .shift])
             }
+
+            // Playback commands — global keyboard shortcuts
+            CommandMenu("Playback") {
+                Button("Play / Pause") {
+                    appState.mainPlayback.togglePlayPause()
+                }
+                .keyboardShortcut(.space, modifiers: [])
+
+                Button("Stop") {
+                    appState.mainPlayback.stop()
+                }
+                .keyboardShortcut(".", modifiers: [.command])
+
+                Divider()
+
+                Button("Next Track") {
+                    appState.mainPlayback.nextTrack()
+                }
+                .keyboardShortcut(.rightArrow, modifiers: [.command])
+
+                Button("Previous Track") {
+                    appState.mainPlayback.previousTrack()
+                }
+                .keyboardShortcut(.leftArrow, modifiers: [.command])
+
+                Divider()
+
+                Button("Seek Forward 5s") {
+                    appState.mainPlayback.seek(to: appState.mainPlayback.currentTime + 5)
+                }
+                .keyboardShortcut(.rightArrow, modifiers: [.shift])
+
+                Button("Seek Back 5s") {
+                    appState.mainPlayback.seek(to: appState.mainPlayback.currentTime - 5)
+                }
+                .keyboardShortcut(.leftArrow, modifiers: [.shift])
+
+                Divider()
+
+                // Preview controls
+                Button("Preview Play / Pause") {
+                    appState.previewPlayback.togglePlayPause()
+                }
+                .keyboardShortcut(.space, modifiers: [.option])
+
+                Button("Preview Stop") {
+                    appState.previewPlayback.stop()
+                }
+                .keyboardShortcut(".", modifiers: [.command, .option])
+
+                Divider()
+
+                Button("Preview Seek Forward 5s") {
+                    appState.previewPlayback.seek(to: appState.previewPlayback.currentTime + 5)
+                }
+                .keyboardShortcut(.rightArrow, modifiers: [.shift, .option])
+
+                Button("Preview Seek Back 5s") {
+                    appState.previewPlayback.seek(to: appState.previewPlayback.currentTime - 5)
+                }
+                .keyboardShortcut(.leftArrow, modifiers: [.shift, .option])
+            }
         }
     }
 
     @Environment(\.openWindow) private var openWindow
-
-    private func openLibrary() {
-        openWindow(id: "library")
-    }
-
-    private func openPlayer() {
-        openWindow(id: "player")
-    }
 }

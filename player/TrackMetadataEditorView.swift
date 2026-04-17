@@ -59,39 +59,30 @@ struct TrackMetadataEditorView: View {
             // ── Fields ─────────────────────────────────────────────────────
             Form {
                 Section("Track Info") {
-                    LabeledContent("Title") {
-                        TextField("Title", text: $title)
-                            .textFieldStyle(.plain)
-                            .multilineTextAlignment(.trailing)
-                    }
-                    LabeledContent("Artist") {
-                        TextField("Artist", text: $artist)
-                            .textFieldStyle(.plain)
-                            .multilineTextAlignment(.trailing)
-                    }
-                    LabeledContent("Album") {
-                        TextField("Album", text: $album)
-                            .textFieldStyle(.plain)
-                            .multilineTextAlignment(.trailing)
-                    }
+                    TextField("Title", text: $title)
+                        .textFieldStyle(.plain)
+                        .multilineTextAlignment(.trailing)
+                    TextField("Artist", text: $artist)
+                        .textFieldStyle(.plain)
+                        .multilineTextAlignment(.trailing)
+                    TextField("Album", text: $album)
+                        .textFieldStyle(.plain)
+                        .multilineTextAlignment(.trailing)
                 }
 
                 Section("Playback") {
-                    LabeledContent("BPM") {
-                        HStack(spacing: 6) {
-                            if bpmError {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .foregroundStyle(.orange)
-                                    .font(.caption)
-                            }
-                            TextField("e.g. 128", text: $bpmText)
-                                .textFieldStyle(.plain)
-                                .multilineTextAlignment(.trailing)
-                                .frame(width: 80)
-                                .onChange(of: bpmText) {
-                                    bpmError = !bpmText.isEmpty && parsedBPM == nil
-                                }
+                    HStack(spacing: 6) {
+                        if bpmError {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                                .font(.caption)
                         }
+                        TextField("BPM", text: $bpmText)
+                            .textFieldStyle(.plain)
+                            .multilineTextAlignment(.trailing)
+                            .onChange(of: bpmText) {
+                                bpmError = !bpmText.isEmpty && parsedBPM == nil
+                            }
                     }
 
                     LabeledContent("Play Count") {
@@ -112,7 +103,7 @@ struct TrackMetadataEditorView: View {
                     LabeledContent("Cue In") {
                         if let t = track.cuePointIn {
                             HStack(spacing: 8) {
-                                Text(formatTime(t))
+                                Text(t.mmss())
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
                                 Button("Clear") {
@@ -129,7 +120,7 @@ struct TrackMetadataEditorView: View {
                     LabeledContent("Cue Out") {
                         if let t = track.cuePointOut {
                             HStack(spacing: 8) {
-                                Text(formatTime(t))
+                                Text(t.mmss())
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
                                 Button("Clear") {
@@ -178,7 +169,7 @@ struct TrackMetadataEditorView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will clear the play count and last-played date for "\(track.title)".")
+            Text("This will clear the play count and last-played date for \"\(track.title)\".")
         }
     }
 
@@ -204,8 +195,4 @@ struct TrackMetadataEditorView: View {
         // play count reset is applied live too
     }
 
-    private func formatTime(_ t: TimeInterval) -> String {
-        let s = Int(t)
-        return "\(s / 60):\(String(format: "%02d", s % 60))"
-    }
 }

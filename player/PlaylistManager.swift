@@ -31,8 +31,13 @@ final class PlaylistManager {
 
     func addTrack(_ track: Track, to playlist: Playlist, modelContext: ModelContext) {
         let nextSortOrder = playlist.entries.count
-        let entry = PlaylistEntry(track: track, playlist: playlist, sortOrder: nextSortOrder)
-        modelContext.insert(entry)
+        if let existingIndex = playlist.entries.firstIndex(where: { $0.track.id == track.id }) {
+            // Disallow duplicate entries; move existing entry to the end of the playlist.
+            let entry = playlist.entries[existingIndex]
+            entry.sortOrder = nextSortOrder
+        } else {
+            modelContext.insert(PlaylistEntry(track: track, playlist: playlist, sortOrder: nextSortOrder))
+        }
         playlist.dateModified = Date()
     }
 

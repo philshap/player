@@ -4,7 +4,10 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 
 ---
 
-## High Priority / Medium Difficulty
+## Medium Priority / Medium Difficulty
+
+### Audio Level Display
+- Using bar graph or analog-style VU meter, show audio playback level for both playback channels
 
 ### Waveform Display
 - Render audio waveform for current track in performance controls
@@ -16,17 +19,20 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 - Route main and preview to specific audio output devices
 - Support USB soundcards (e.g. Traktor Audio 2)
 - Would need AVAudioEngine output node configuration per device
-- Critical for real DJ use (headphone cueing on separate output)
 
 ---
 
-## Medium Priority / Low Difficulty
+## Medium Priority / High Difficulty
 
-### BPM Detection
-- Auto-detect BPM for tracks that don't have it in file metadata
-- Could use onset detection / autocorrelation on audio samples
-- Run on import or on-demand from context menu
-- Display already exists in library and playlist views
+### Audio Reliability
+- Investigate and prevent audio glitches during performance
+- Pre-buffer next track before auto-advance
+- Monitor audio engine for underruns
+- Possibly use higher-priority thread for audio scheduling
+
+---
+
+## Low Priority / Low Difficulty
 
 ### Keyboard Shortcut Expansion
 - Seek forward/back for preview
@@ -34,9 +40,12 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 - Load selected library track into preview
 - These shortcuts exist in menus but may need refinement
 
+### UI Polish
+- Nicer playback controller with icons/graphics, maybe larger buttons
+
 ---
 
-## Medium Priority / Medium Difficulty
+## Low Priority / Medium Difficulty
 
 ### Playlist Organization
 - As playlist count grows, sidebar becomes hard to navigate
@@ -45,24 +54,13 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 
 ---
 
-## Low Priority / Low Difficulty
-
-### UI Polish (Remaining)
-- Drag & drop feedback shows track name (or "N tracks" for multi-select)
-- Drag into playlist from library at specific position with insertion feedback
-
----
-
 ## Low Priority / High Difficulty
 
-### Portable Performance Mode
-- Bundle app + library + audio files onto a removable drive
-- Run on another Mac without installation
-- Needs file path remapping, self-contained data store
-- Complex due to code signing, sandboxing, and file references
-
-### Audio Reliability
-- Investigate and prevent audio glitches during performance
-- Pre-buffer next track before auto-advance
-- Monitor audio engine for underruns
-- Possibly use higher-priority thread for audio scheduling
+### Portable Library
+- Bundle app + library + audio files onto a removable drive or self-contained folder
+- Replace per-track bookmarks + absolute URLs with a single folder-level bookmark and relative paths
+- Store SwiftData at a configurable URL within the library folder
+- Copy-on-import: audio files copied into Music/ subfolder
+- Launch onboarding: "New Library" / "Open Library" panel
+- Migration path for existing libraries
+- See PORTABLE-LIBRARY.md for detailed design

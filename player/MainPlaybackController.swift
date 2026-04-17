@@ -46,6 +46,8 @@ final class MainPlaybackController {
     private var seekFrameOffset:       AVAudioFramePosition = 0
     private var positionTimer:         Timer?
     private var gapTimer:              Timer?
+    /// Cancellable task for background buffer loads during seek.
+    private var seekTask:              Task<Void, Never>?
 
     /// Incremented on every play/seek/stop so stale completion callbacks are discarded.
     private var playbackGeneration:    Int  = 0
@@ -57,6 +59,10 @@ final class MainPlaybackController {
 
     // MARK: - Pre-fetch & Seamless Chaining
 
+    /// Full decoded buffer for the current track — kept in memory so seeks can
+    /// slice it without re-reading from disk or resolving bookmarks.
+    private var currentFullBuffer:    AVAudioPCMBuffer?
+
     /// Buffer loaded ahead of time for the upcoming track.
     private var preloadedBuffer:      AVAudioPCMBuffer?
     private var preloadedBufferIndex: Int               = -1
@@ -67,6 +73,10 @@ final class MainPlaybackController {
     /// Index of the track whose buffer has already been appended to the player node
     /// queue (via `audioEngine.chainMain`). Non-nil means the transition will be gapless.
     private var chainedNextIndex:     Int?
+
+    /// The buffer that was chained for the next track; becomes `currentFullBuffer`
+    /// when `transitionToChained` runs.
+    private var chainedBuffer:        AVAudioPCMBuffer?
 
     // MARK: - Init
 
@@ -125,8 +135,11 @@ final class MainPlaybackController {
         cancelGap()
         cancelPrefetch()
         cancelChain()
+        seekTask?.cancel()
+        seekTask = nil
         playbackGeneration += 1
         audioEngine.stopMain()
+        currentFullBuffer  = nil
         isPlaying          = false
         currentTrack       = nil
         currentTrackIndex  = 0
@@ -164,6 +177,8 @@ final class MainPlaybackController {
 
         cancelPrefetch()
         cancelChain()
+        seekTask?.cancel()
+        seekTask = nil
 
         let clamped     = time.clamped(to: 0...duration)
         let sampleRate  = audioEngine.mainSampleRate()
@@ -173,17 +188,54 @@ final class MainPlaybackController {
         playbackGeneration += 1
         let gen            = playbackGeneration
 
-        do {
-            try audioEngine.seekMain(url: track.accessibleURL(),
-                                     toFrame: targetFrame) { [weak self] in
-                self?.handleTrackCompletion(generation: gen)
+        currentTime = clamped
+        isPlaying   = false
+        stopPositionTimer()
+
+        if let buf = currentFullBuffer, let slice = buf.sliced(fromFrame: targetFrame) {
+            // Fast path: slice the in-memory buffer — no disk access, no bookmark resolution.
+            do {
+                try audioEngine.scheduleSeekMain(slice) { [weak self] in
+                    self?.handleTrackCompletion(generation: gen)
+                }
+                isPlaying = true
+                startPositionTimer()
+                prefetchAndChain(nextIndex: currentTrackIndex + 1, generation: gen)
+            } catch {
+                print("MainPlaybackController: seek error — \(error.localizedDescription)")
             }
-            isPlaying   = true
-            currentTime = clamped
-            startPositionTimer()
-            prefetchAndChain(nextIndex: currentTrackIndex + 1, generation: gen)
-        } catch {
-            print("MainPlaybackController: seek error — \(error.localizedDescription)")
+            return
+        }
+
+        // Slow path: full buffer not available yet (shouldn't happen during normal playback,
+        // but guards against seeking before the initial load completes).
+        let url           = track.accessibleURL()
+        let outputChannel = audioEngine.mainOutputChannel
+        guard let format  = audioEngine.playerFormat else { return }
+        audioEngine.stopMain()
+
+        seekTask = Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            do {
+                let buffer = try AudioEngineManager.loadBuffer(
+                    url: url, fromFrame: targetFrame, outputChannel: outputChannel, playerFormat: format)
+                guard !Task.isCancelled else { return }
+                await MainActor.run { [weak self] in
+                    guard let self, !Task.isCancelled,
+                          self.playbackGeneration == gen else { return }
+                    do {
+                        try self.audioEngine.scheduleSeekMain(buffer) { [weak self] in
+                            self?.handleTrackCompletion(generation: gen)
+                        }
+                        self.currentFullBuffer = buffer
+                        self.isPlaying = true
+                        self.startPositionTimer()
+                        self.prefetchAndChain(nextIndex: self.currentTrackIndex + 1, generation: gen)
+                    } catch {
+                        print("MainPlaybackController: seek error — \(error.localizedDescription)")
+                    }
+                }
+            } catch { }
         }
     }
 
@@ -193,6 +245,8 @@ final class MainPlaybackController {
         guard index >= 0 && index < playlist.count else { return }
 
         recordPlayIfNeeded()
+        seekTask?.cancel()
+        seekTask = nil
         cancelPrefetch()
         cancelChain()
 
@@ -216,12 +270,13 @@ final class MainPlaybackController {
                 preloadedBuffer    = nil
                 preloadedBufferIndex = -1
             } else {
-                buffer = try audioEngine.loadBuffer(url: track.accessibleURL())
+                buffer = try audioEngine.loadBufferForMain(url: track.accessibleURL())
             }
 
             try audioEngine.playMain(buffer) { [weak self] in
                 self?.handleTrackCompletion(generation: gen)
             }
+            currentFullBuffer = buffer
             isPlaying = true
             startPositionTimer()
             prefetchAndChain(nextIndex: index + 1, generation: gen)
@@ -240,13 +295,15 @@ final class MainPlaybackController {
     private func prefetchAndChain(nextIndex: Int, generation: Int) {
         guard nextIndex < playlist.count else { return }
 
-        // Capture URL on the main thread before crossing into the background task.
-        let url = playlist[nextIndex].accessibleURL()
+        // Capture URL, format, and channel setting on the main actor before entering the background task.
+        let url     = playlist[nextIndex].accessibleURL()
+        let format  = audioEngine.playerFormat!
+        let channel = audioEngine.mainOutputChannel
 
         prefetchTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             do {
-                let buffer = try self.audioEngine.loadBuffer(url: url)
+                let buffer = try AudioEngineManager.loadBuffer(url: url, outputChannel: channel, playerFormat: format)
 
                 await MainActor.run {
                     // Discard if the user has already moved on.
@@ -266,6 +323,7 @@ final class MainPlaybackController {
                     self.audioEngine.chainMain(buffer) { [weak self] in
                         self?.handleTrackCompletion(generation: generation)
                     }
+                    self.chainedBuffer    = buffer
                     self.chainedNextIndex = nextIndex
                 }
             } catch {
@@ -295,15 +353,27 @@ final class MainPlaybackController {
     private func transitionToChained(index: Int, generation: Int) {
         recordPlayIfNeeded()
 
-        chainedNextIndex = nil
+        chainedNextIndex  = nil
+        currentFullBuffer = chainedBuffer   // promote the chained buffer for seeking
+        chainedBuffer     = nil
 
         let track             = playlist[index]
         currentTrackIndex     = index
         currentTrack          = track
         duration              = track.duration
         currentTime           = 0
-        seekFrameOffset       = 0
         currentTrackPlayRecorded = false
+
+        // The player node's sample counter accumulates across chained buffers — it is
+        // never reset by a stop/play cycle because chaining doesn't stop the node.
+        // Store the node's current position as a negative offset so updatePosition()
+        // computes time relative to THIS track's start rather than the session start.
+        let sampleRate = audioEngine.mainSampleRate()
+        if let pos = audioEngine.mainPlaybackPosition() {
+            seekFrameOffset = -AVAudioFramePosition(pos * sampleRate)
+        } else {
+            seekFrameOffset = 0
+        }
 
         // Keep playbackGeneration unchanged: the chained track's completion handler
         // was registered with the same generation value.
@@ -406,7 +476,7 @@ final class MainPlaybackController {
         if let position = audioEngine.mainPlaybackPosition() {
             let offsetSeconds = Double(seekFrameOffset) / audioEngine.mainSampleRate()
             let computed      = position + offsetSeconds
-            currentTime       = min(computed, duration)
+            currentTime       = max(0, min(computed, duration))
 
             if let cueOut = currentTrack?.cuePointOut, currentTime >= cueOut {
                 autoAdvance()
@@ -418,16 +488,3 @@ final class MainPlaybackController {
     }
 }
 
-// MARK: - Clamping Helpers
-
-private extension Int {
-    func clamped(to range: ClosedRange<Int>) -> Int {
-        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
-    }
-}
-
-private extension TimeInterval {
-    func clamped(to range: ClosedRange<TimeInterval>) -> TimeInterval {
-        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
-    }
-}

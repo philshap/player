@@ -10,23 +10,24 @@
 //
 
 import Testing
+@testable import player
 @preconcurrency import AVFoundation
 
 // MARK: - Graph builder
 
 /// Builds the same player→mixer→mainMixerNode graph used by AudioEngineManager,
 /// configured for offline rendering so tests can inspect rendered PCM samples.
+/// Channel isolation is enforced by the buffer content (L=signal/R=0 for main,
+/// L=0/R=signal for preview) — no pan settings are used.
 private struct OfflineGraph {
 
     let engine        = AVAudioEngine()
     let mainPlayer    = AVAudioPlayerNode()
     let previewPlayer = AVAudioPlayerNode()
-    let monoFormat:   AVAudioFormat
     let stereoFormat: AVAudioFormat
 
     init(sampleRate: Double = 44_100) throws {
         stereoFormat = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
-        monoFormat   = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
 
         let mainMixer    = AVAudioMixerNode()
         let previewMixer = AVAudioMixerNode()
@@ -35,15 +36,11 @@ private struct OfflineGraph {
             engine.attach(node)
         }
 
-        // Mono connections force a stereo→mono downmix before panning,
-        // which is required for hard-pan to fully isolate channels.
-        engine.connect(mainPlayer,    to: mainMixer,            format: monoFormat)
-        engine.connect(previewPlayer, to: previewMixer,         format: monoFormat)
+        // All-stereo connections; no pan. Channel routing is in the buffer content.
+        engine.connect(mainPlayer,    to: mainMixer,            format: stereoFormat)
+        engine.connect(previewPlayer, to: previewMixer,         format: stereoFormat)
         engine.connect(mainMixer,     to: engine.mainMixerNode, format: stereoFormat)
         engine.connect(previewMixer,  to: engine.mainMixerNode, format: stereoFormat)
-
-        mainMixer.pan    = -1.0   // hard left  → main output
-        previewMixer.pan =  1.0   // hard right → cue/preview output
 
         try engine.enableManualRenderingMode(
             .offline,
@@ -89,10 +86,50 @@ private func rms(_ ptr: UnsafePointer<Float>, count: Int) -> Float {
     return sqrt(sum / Float(count))
 }
 
+/// Writes a PCMBuffer to a temporary CAF file and returns the URL.
+/// Callers are responsible for the file lifetime; temp files are cleaned up by the OS.
+private func writeWAV(_ buffer: AVAudioPCMBuffer) throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension("caf")
+    let file = try AVAudioFile(forWriting: url, settings: buffer.format.settings)
+    try file.write(from: buffer)
+    return url
+}
+
 /// Arithmetic mean of a channel pointer.
 private func mean(_ ptr: UnsafePointer<Float>, count: Int) -> Float {
     guard count > 0 else { return 0 }
     return (0..<count).reduce(Float(0)) { $0 + ptr[$1] } / Float(count)
+}
+
+/// Returns a stereo buffer where both channels equal `value` (simulates a stereo audio file).
+private func stereoDCBuffer(sampleRate: Double = 44_100, frameCount: AVAudioFrameCount = 512,
+                             value: Float = 1.0) -> AVAudioPCMBuffer {
+    let fmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
+    let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: frameCount)!
+    buf.frameLength = frameCount
+    for ch in 0..<2 {
+        let ptr = buf.floatChannelData![ch]
+        for i in 0..<Int(frameCount) { ptr[i] = value }
+    }
+    return buf
+}
+
+/// Downmixes a stereo buffer to mono by averaging L and R — no AVAudioConverter needed.
+/// Uses the same result as a perfect L+R mix, which is what real music files contain.
+private func downmixToMono(_ source: AVAudioPCMBuffer,
+                            monoFormat: AVAudioFormat) -> AVAudioPCMBuffer {
+    let frameCount = source.frameLength
+    let out = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: frameCount)!
+    out.frameLength = frameCount
+    let outCh = out.floatChannelData![0]
+    let inL   = source.floatChannelData![0]
+    let inR   = source.floatChannelData![1]
+    for i in 0..<Int(frameCount) {
+        outCh[i] = (inL[i] + inR[i]) * 0.5
+    }
+    return out
 }
 
 // MARK: - Tests
@@ -100,64 +137,105 @@ private func mean(_ ptr: UnsafePointer<Float>, count: Int) -> Float {
 @Suite("AudioEngine channel isolation")
 struct AudioEngineChannelIsolationTests {
 
-    /// Scheduling a signal on the main player should produce output only in the
-    /// left channel. The right channel must remain silent.
-    @Test func mainPlayerIsIsolatedToLeftChannel() throws {
-        let graph = try OfflineGraph()
-        graph.mainPlayer.scheduleBuffer(dcBuffer(format: graph.monoFormat))
+    // ── Buffer construction (no hardware/engine needed) ───────────────────
+    // These tests verify AudioEngineManager.loadBuffer directly by inspecting
+    // the PCM sample values, confirming channel assignment before any audio
+    // engine involvement.
 
-        let output  = try graph.render()
-        let n       = Int(output.frameLength)
-        let leftRMS = rms(output.floatChannelData![0], count: n)
-        let rightRMS = rms(output.floatChannelData![1], count: n)
-
-        #expect(leftRMS  > 0.1,   "Main player should produce signal in the left channel")
-        #expect(rightRMS < 0.001, "Main player must not bleed into the right (cue) channel")
+    @Test func mainBufferHasSignalOnlyInLeftChannel() throws {
+        let fmt    = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)!
+        let stereo = stereoDCBuffer(value: 1.0)
+        let buf    = try AudioEngineManager.loadBuffer(
+            url: writeWAV(stereo),
+            outputChannel: .left,
+            playerFormat: fmt
+        )
+        let n        = Int(buf.frameLength)
+        let leftRMS  = rms(buf.floatChannelData![0], count: n)
+        let rightRMS = rms(buf.floatChannelData![1], count: n)
+        #expect(leftRMS  > 0.1,   "Main buffer must carry signal in left channel")
+        #expect(rightRMS < 0.001, "Main buffer must have silence in right channel")
     }
 
-    /// Scheduling a signal on the preview player should produce output only in
-    /// the right channel. The left channel must remain silent.
-    @Test func previewPlayerIsIsolatedToRightChannel() throws {
-        let graph = try OfflineGraph()
-        graph.previewPlayer.scheduleBuffer(dcBuffer(format: graph.monoFormat))
+    @Test func previewBufferHasSignalOnlyInRightChannel() throws {
+        let fmt    = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)!
+        let stereo = stereoDCBuffer(value: 1.0)
+        let buf    = try AudioEngineManager.loadBuffer(
+            url: writeWAV(stereo),
+            outputChannel: .right,
+            playerFormat: fmt
+        )
+        let n        = Int(buf.frameLength)
+        let leftRMS  = rms(buf.floatChannelData![0], count: n)
+        let rightRMS = rms(buf.floatChannelData![1], count: n)
+        #expect(leftRMS  < 0.001, "Preview buffer must have silence in left channel")
+        #expect(rightRMS > 0.1,   "Preview buffer must carry signal in right channel")
+    }
 
+    @Test func oppositePolarityBuffersDontCancel() throws {
+        let fmt = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)!
+        let mainBuf    = try AudioEngineManager.loadBuffer(url: writeWAV(stereoDCBuffer(value:  1.0)),
+                                                           outputChannel: .left,  playerFormat: fmt)
+        let previewBuf = try AudioEngineManager.loadBuffer(url: writeWAV(stereoDCBuffer(value: -1.0)),
+                                                           outputChannel: .right, playerFormat: fmt)
+        let n = Int(mainBuf.frameLength)
+        #expect(mean(mainBuf.floatChannelData![0],    count: n) >  0.1)
+        #expect(mean(mainBuf.floatChannelData![1],    count: n).magnitude < 0.001)
+        #expect(mean(previewBuf.floatChannelData![0], count: n).magnitude < 0.001)
+        #expect(mean(previewBuf.floatChannelData![1], count: n) < -0.1)
+    }
+
+    // ── End-to-end rendering (offline engine) ─────────────────────────────
+    // These tests verify the complete path: pre-built buffers → player nodes →
+    // mixers → mainMixerNode, confirming channel isolation survives the graph.
+
+    @Test func mainPlayerOutputIsolatedToLeftInRenderedAudio() throws {
+        let graph  = try OfflineGraph()
+        let stereo = stereoDCBuffer(sampleRate: 44_100, value: 1.0)
+        let buf    = try AudioEngineManager.loadBuffer(url: writeWAV(stereo),
+                                                       outputChannel: .left,
+                                                       playerFormat: graph.stereoFormat)
+        graph.mainPlayer.scheduleBuffer(buf)
         let output   = try graph.render()
         let n        = Int(output.frameLength)
-        let leftRMS  = rms(output.floatChannelData![0], count: n)
-        let rightRMS = rms(output.floatChannelData![1], count: n)
-
-        #expect(leftRMS  < 0.001, "Preview player must not bleed into the left (main) channel")
-        #expect(rightRMS > 0.1,   "Preview player should produce signal in the right channel")
+        #expect(rms(output.floatChannelData![0], count: n) > 0.1,   "Left should carry main signal")
+        #expect(rms(output.floatChannelData![1], count: n) < 0.001, "Right should be silent")
     }
 
-    /// When both players run simultaneously with opposite-polarity signals,
-    /// the left channel should be positive and the right channel negative,
-    /// confirming there is no cross-contamination between the two paths.
-    @Test func mainAndPreviewChannelsDoNotCrossContaminate() throws {
-        let graph = try OfflineGraph()
-        graph.mainPlayer.scheduleBuffer(dcBuffer(format: graph.monoFormat, value:  1.0))
-        graph.previewPlayer.scheduleBuffer(dcBuffer(format: graph.monoFormat, value: -1.0))
-
-        let output     = try graph.render()
-        let n          = Int(output.frameLength)
-        let leftMean   = mean(output.floatChannelData![0], count: n)
-        let rightMean  = mean(output.floatChannelData![1], count: n)
-
-        #expect(leftMean  >  0.1, "Left channel carries main (+1.0); mean must be positive")
-        #expect(rightMean < -0.1, "Right channel carries preview (-1.0); mean must be negative")
+    @Test func previewPlayerOutputIsolatedToRightInRenderedAudio() throws {
+        let graph  = try OfflineGraph()
+        let stereo = stereoDCBuffer(sampleRate: 44_100, value: 1.0)
+        let buf    = try AudioEngineManager.loadBuffer(url: writeWAV(stereo),
+                                                       outputChannel: .right,
+                                                       playerFormat: graph.stereoFormat)
+        graph.previewPlayer.scheduleBuffer(buf)
+        let output   = try graph.render()
+        let n        = Int(output.frameLength)
+        #expect(rms(output.floatChannelData![0], count: n) < 0.001, "Left should be silent")
+        #expect(rms(output.floatChannelData![1], count: n) > 0.1,   "Right should carry preview signal")
     }
 
-    /// Silence on both players should produce silence on both output channels.
+    @Test func bothPlayersDoNotCrossContaminateInRenderedAudio() throws {
+        let graph      = try OfflineGraph()
+        let mainBuf    = try AudioEngineManager.loadBuffer(url: writeWAV(stereoDCBuffer(value:  1.0)),
+                                                           outputChannel: .left,
+                                                           playerFormat: graph.stereoFormat)
+        let previewBuf = try AudioEngineManager.loadBuffer(url: writeWAV(stereoDCBuffer(value: -1.0)),
+                                                           outputChannel: .right,
+                                                           playerFormat: graph.stereoFormat)
+        graph.mainPlayer.scheduleBuffer(mainBuf)
+        graph.previewPlayer.scheduleBuffer(previewBuf)
+        let output = try graph.render()
+        let n      = Int(output.frameLength)
+        #expect(mean(output.floatChannelData![0], count: n) >  0.1, "Left carries main (+1.0)")
+        #expect(mean(output.floatChannelData![1], count: n) < -0.1, "Right carries preview (-1.0)")
+    }
+
     @Test func silentPlayersProduceSilentOutput() throws {
-        let graph = try OfflineGraph()
-        // Nothing scheduled — both players are silent.
-
-        let output   = try graph.render()
-        let n        = Int(output.frameLength)
-        let leftRMS  = rms(output.floatChannelData![0], count: n)
-        let rightRMS = rms(output.floatChannelData![1], count: n)
-
-        #expect(leftRMS  < 0.001, "Left channel should be silent with no scheduled content")
-        #expect(rightRMS < 0.001, "Right channel should be silent with no scheduled content")
+        let graph  = try OfflineGraph()
+        let output = try graph.render()
+        let n      = Int(output.frameLength)
+        #expect(rms(output.floatChannelData![0], count: n) < 0.001)
+        #expect(rms(output.floatChannelData![1], count: n) < 0.001)
     }
 }
