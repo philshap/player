@@ -29,6 +29,10 @@ final class PreviewPlaybackController {
 
     /// Total duration of the currently loaded preview track (seconds).
     private(set) var duration: TimeInterval = 0
+    
+    /// When true, ignores cue points and plays the full track.
+    /// Useful for setting/adjusting cue points while auditioning.
+    var bypassCuePoints: Bool = false
 
     // MARK: - Internal State
 
@@ -65,18 +69,43 @@ final class PreviewPlaybackController {
 
     // MARK: - Loading
 
+    /// Returns the effective duration of a track respecting cue points.
+    private func effectiveDuration(for track: Track) -> TimeInterval {
+        if bypassCuePoints {
+            return track.duration
+        }
+        let cueIn = track.cuePointIn ?? 0
+        let cueOut = track.cuePointOut ?? track.duration
+        return max(0, cueOut - cueIn)
+    }
+    
+    /// Returns the effective start frame accounting for cue-in.
+    private func effectiveStartFrame(for track: Track, sampleRate: Double) -> AVAudioFramePosition {
+        if bypassCuePoints {
+            return 0
+        }
+        return track.cuePointIn.map { AVAudioFramePosition($0 * sampleRate) } ?? 0
+    }
+    
+    /// Returns the effective end frame accounting for cue-out.
+    private func effectiveEndFrame(for track: Track, sampleRate: Double) -> AVAudioFramePosition? {
+        if bypassCuePoints {
+            return nil
+        }
+        return track.cuePointOut.map { AVAudioFramePosition($0 * sampleRate) }
+    }
+
     /// Loads a track into the preview player and begins playback.
     ///
-    /// The full file is decoded once on a background task and cached as
-    /// `loadedBuffer`. Subsequent seeks slice that buffer in memory —
-    /// no further disk access or bookmark resolution required.
+    /// Always loads the FULL buffer so it's available for waveform display.
+    /// Cue points are applied when scheduling playback, not during buffer load.
     func load(_ track: Track) {
         loadTask?.cancel()
         loadTask = nil
         stop()
         loadedBuffer = nil
         currentTrack = track
-        duration = track.duration
+        duration = effectiveDuration(for: track)
 
         let url           = track.accessibleURL(libraryFolderURL: libraryFolderURL)
         let outputChannel = audioEngine.previewOutputChannel
@@ -85,16 +114,20 @@ final class PreviewPlaybackController {
         loadTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             do {
+                // Always load the FULL buffer for waveform display
                 let buffer = try AudioEngineManager.loadBuffer(
-                    url: url, outputChannel: outputChannel, playerFormat: format)
+                    url: url, 
+                    outputChannel: outputChannel, 
+                    playerFormat: format
+                )
+                
                 guard !Task.isCancelled else { return }
                 await MainActor.run { [weak self] in
                     guard let self, !Task.isCancelled else { return }
-                    self.loadedBuffer    = buffer
-                    self.seekFrameOffset = 0
-                    try? self.audioEngine.scheduleSeekPreview(buffer)
-                    self.isPlaying = true
-                    self.startPositionTimer()
+                    self.loadedBuffer = buffer
+                    
+                    // Apply cue points when scheduling playback
+                    self.scheduleFromPosition(0)
                 }
             } catch {
                 print("PreviewPlaybackController: load error — \(error.localizedDescription)")
@@ -144,15 +177,11 @@ final class PreviewPlaybackController {
         guard currentTrack != nil else { return }
 
         let clampedTime = max(0, min(time, duration))
-        let sampleRate  = audioEngine.previewSampleRate()
-        let targetFrame = AVAudioFramePosition(clampedTime * sampleRate)
-
-        currentTime     = clampedTime
-        seekFrameOffset = targetFrame
-        isPlaying       = false
+        currentTime = clampedTime
+        isPlaying = false
         stopPositionTimer()
 
-        scheduleFromCurrentPosition()
+        scheduleFromPosition(clampedTime)
     }
 
     // MARK: - Unload
@@ -167,28 +196,73 @@ final class PreviewPlaybackController {
 
     // MARK: - Private
 
+    /// Schedules playback from the given time position (in seconds relative to cue-in).
+    /// Slices the full buffer to respect cue points if they're not bypassed.
+    private func scheduleFromPosition(_ position: TimeInterval) {
+        guard let track = currentTrack else { return }
+        guard let buffer = loadedBuffer else {
+            // Buffer not yet loaded; this will be called again once load completes
+            return
+        }
+        
+        let sampleRate = audioEngine.previewSampleRate()
+        
+        // Calculate the actual frame position in the full buffer
+        let cueInFrame = effectiveStartFrame(for: track, sampleRate: sampleRate)
+        let cueOutFrame = effectiveEndFrame(for: track, sampleRate: sampleRate)
+        
+        // Position is relative to the effective start (cue-in)
+        let absoluteFrame = cueInFrame + AVAudioFramePosition(position * sampleRate)
+        
+        // Slice the buffer from the seek position
+        guard let slice = buffer.sliced(fromFrame: absoluteFrame) else {
+            print("PreviewPlaybackController: failed to slice buffer")
+            return
+        }
+        
+        // If there's a cue-out and we're not bypassing, further slice to stop at cue-out
+        let finalSlice: AVAudioPCMBuffer
+        if let cueOut = cueOutFrame, !bypassCuePoints {
+            let remainingFrames = cueOut - absoluteFrame
+            if remainingFrames > 0, remainingFrames < slice.frameLength {
+                // Slice again to limit to cue-out point
+                if let limited = slice.sliced(fromFrame: 0, length: AVAudioFrameCount(remainingFrames)) {
+                    finalSlice = limited
+                } else {
+                    finalSlice = slice
+                }
+            } else {
+                finalSlice = slice
+            }
+        } else {
+            finalSlice = slice
+        }
+        
+        seekFrameOffset = absoluteFrame
+        audioEngine.stopPreview()
+        
+        do {
+            try audioEngine.scheduleSeekPreview(finalSlice)
+            isPlaying = true
+            startPositionTimer()
+        } catch {
+            print("PreviewPlaybackController: schedule error — \(error.localizedDescription)")
+        }
+    }
+
     /// Schedules playback from `seekFrameOffset`, using the cached buffer if
     /// available (fast memcpy slice) or falling back to a background disk load.
     private func scheduleFromCurrentPosition() {
-        let frame = seekFrameOffset
-
-        if let buf = loadedBuffer, let slice = buf.sliced(fromFrame: frame) {
-            // Fast path: slice the in-memory buffer — no disk access.
-            audioEngine.stopPreview()
-            do {
-                try audioEngine.scheduleSeekPreview(slice)
-                isPlaying = true
-                startPositionTimer()
-            } catch {
-                print("PreviewPlaybackController: schedule error — \(error.localizedDescription)")
-            }
+        guard let track = currentTrack else { return }
+        
+        if loadedBuffer != nil {
+            // Use the fast path with the full buffer
+            scheduleFromPosition(currentTime)
             return
         }
 
         // Slow path: buffer not yet loaded (e.g. load() is still in progress).
-        // This path should be rare; the load task stores loadedBuffer before
-        // starting playback, so any seek arriving after that uses the fast path.
-        guard let track = currentTrack else { return }
+        // This path should be rare; load() calls scheduleFromPosition once the buffer is ready.
         let url           = track.accessibleURL(libraryFolderURL: libraryFolderURL)
         let outputChannel = audioEngine.previewOutputChannel
         guard let format  = audioEngine.playerFormat else { return }
@@ -198,14 +272,18 @@ final class PreviewPlaybackController {
         loadTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             do {
+                // Load the full buffer
                 let buffer = try AudioEngineManager.loadBuffer(
-                    url: url, fromFrame: frame, outputChannel: outputChannel, playerFormat: format)
+                    url: url, 
+                    outputChannel: outputChannel, 
+                    playerFormat: format
+                )
+                
                 guard !Task.isCancelled else { return }
                 await MainActor.run { [weak self] in
                     guard let self, !Task.isCancelled else { return }
-                    try? self.audioEngine.scheduleSeekPreview(buffer)
-                    self.isPlaying = true
-                    self.startPositionTimer()
+                    self.loadedBuffer = buffer
+                    self.scheduleFromPosition(self.currentTime)
                 }
             } catch {
                 print("PreviewPlaybackController: seek error — \(error.localizedDescription)")

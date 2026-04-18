@@ -184,6 +184,18 @@ final class AudioEngineManager {
     func loadBufferForMain(url: URL, fromFrame startFrame: AVAudioFramePosition) throws -> AVAudioPCMBuffer {
         try Self.loadBuffer(url: url, fromFrame: startFrame, outputChannel: mainOutputChannel, playerFormat: playerFormat)
     }
+    
+    /// Loads a buffer respecting cue in/out points (in seconds).
+    func loadBufferForMain(url: URL, cueIn: TimeInterval?, cueOut: TimeInterval?) throws -> AVAudioPCMBuffer {
+        let file = try AVAudioFile(forReading: url)
+        let sampleRate = file.processingFormat.sampleRate
+        
+        let startFrame = cueIn.map { AVAudioFramePosition($0 * sampleRate) } ?? 0
+        let endFrame = cueOut.map { AVAudioFramePosition($0 * sampleRate) }
+        
+        return try Self.loadBuffer(url: url, fromFrame: startFrame, toFrame: endFrame,
+                                  outputChannel: mainOutputChannel, playerFormat: playerFormat)
+    }
 
     /// Loads a whole file as a stereo buffer for preview output.
     /// Channel routing is determined by `previewOutputChannel`.
@@ -203,12 +215,34 @@ final class AudioEngineManager {
     nonisolated static func loadBuffer(url: URL, fromFrame startFrame: AVAudioFramePosition,
                                        outputChannel: OutputChannel,
                                        playerFormat: AVAudioFormat) throws -> AVAudioPCMBuffer {
+        return try loadBuffer(url: url, fromFrame: startFrame, toFrame: nil, 
+                            outputChannel: outputChannel, playerFormat: playerFormat)
+    }
+    
+    /// Background-safe loader with optional start and end frames for cue point support.
+    /// - Parameters:
+    ///   - url: The audio file URL
+    ///   - startFrame: Starting frame position (defaults to 0)
+    ///   - toFrame: Optional ending frame position (nil = end of file)
+    ///   - outputChannel: Which channel(s) to output to
+    ///   - playerFormat: The target playback format
+    nonisolated static func loadBuffer(url: URL, 
+                                       fromFrame startFrame: AVAudioFramePosition = 0,
+                                       toFrame endFrame: AVAudioFramePosition? = nil,
+                                       outputChannel: OutputChannel,
+                                       playerFormat: AVAudioFormat) throws -> AVAudioPCMBuffer {
         let file = try AVAudioFile(forReading: url)
         guard startFrame >= 0 && startFrame < file.length else { throw BufferError.invalidRange }
+        
         file.framePosition = startFrame
-        let remaining = AVAudioFrameCount(file.length - startFrame)
+        let actualEndFrame = endFrame ?? file.length
+        guard actualEndFrame > startFrame && actualEndFrame <= file.length else { 
+            throw BufferError.invalidRange 
+        }
+        
+        let frameCount = AVAudioFrameCount(actualEndFrame - startFrame)
         return try buildChannelBuffer(file: file,
-                                      frameCount: remaining,
+                                      frameCount: frameCount,
                                       outputChannel: outputChannel,
                                       playerFormat: playerFormat)
     }
@@ -564,6 +598,25 @@ extension AVAudioPCMBuffer {
         let bytesPerFrame = MemoryLayout<Float>.size
         for ch in 0..<Int(format.channelCount) {
             memcpy(dst[ch], src[ch].advanced(by: Int(startFrame)), Int(remaining) * bytesPerFrame)
+        }
+        return slice
+    }
+    
+    /// Returns a new buffer containing exactly `length` frames starting at `startFrame`.
+    ///
+    /// This is a fast memcpy of the in-memory float data — no disk I/O.
+    /// Returns nil if the range is out of bounds or allocation fails.
+    func sliced(fromFrame startFrame: AVAudioFramePosition, length: AVAudioFrameCount) -> AVAudioPCMBuffer? {
+        guard startFrame >= 0,
+              length > 0,
+              startFrame + AVAudioFramePosition(length) <= AVAudioFramePosition(frameLength),
+              let src = floatChannelData else { return nil }
+        guard let slice = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: length),
+              let dst = slice.floatChannelData else { return nil }
+        slice.frameLength = length
+        let bytesPerFrame = MemoryLayout<Float>.size
+        for ch in 0..<Int(format.channelCount) {
+            memcpy(dst[ch], src[ch].advanced(by: Int(startFrame)), Int(length) * bytesPerFrame)
         }
         return slice
     }
