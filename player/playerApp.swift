@@ -12,56 +12,22 @@ import SwiftUI
 struct playerApp: App {
     @State private var appState = AppState()
 
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Track.self,
-            Playlist.self,
-            PlaylistEntry.self
-        ])
-        let configuration = ModelConfiguration("player", isStoredInMemoryOnly: false)
-        do {
-            return try ModelContainer(for: schema, configurations: [configuration])
-        } catch {
-            // Migration failed — delete the store and retry
-            print("[playerApp] ModelContainer creation failed, resetting store: \(error)")
-            let storeURL = configuration.url
-            let related = [
-                storeURL.appendingPathExtension("wal"),
-                storeURL.appendingPathExtension("shm"),
-            ]
-            for url in [storeURL] + related {
-                try? FileManager.default.removeItem(at: url)
-            }
-            do {
-                return try ModelContainer(for: schema, configurations: [configuration])
-            } catch {
-                fatalError("Could not create ModelContainer after reset: \(error)")
-            }
-        }
-    }()
-
     var body: some Scene {
         // Library window — the main/default window
         Window("Library", id: "library") {
-            LibraryView()
-                .environment(appState)
+            libraryContent
         }
-        .modelContainer(sharedModelContainer)
 
         // Player window — now playing + preview controls
         Window("Player", id: "player") {
-            PlayerView()
-                .environment(appState)
+            playerContent
         }
-        .modelContainer(sharedModelContainer)
         .defaultSize(width: 500, height: 300)
 
         // Playlist windows — one per playlist, opened by PersistentIdentifier
         WindowGroup("Playlist", id: "playlist", for: String.self) { $playlistID in
-            PlaylistWindowView(playlistID: playlistID)
-                .environment(appState)
+            playlistContent(playlistID: playlistID)
         }
-        .modelContainer(sharedModelContainer)
 
         .commands {
             // Window commands
@@ -149,4 +115,39 @@ struct playerApp: App {
     }
 
     @Environment(\.openWindow) private var openWindow
+
+    // MARK: - Conditional Content
+
+    @ViewBuilder
+    private var libraryContent: some View {
+        if let container = appState.modelContainer {
+            LibraryView()
+                .environment(appState)
+                .modelContainer(container)
+        } else {
+            WelcomeView()
+                .environment(appState)
+        }
+    }
+
+    @ViewBuilder
+    private var playerContent: some View {
+        if let container = appState.modelContainer {
+            PlayerView()
+                .environment(appState)
+                .modelContainer(container)
+        } else {
+            WelcomeView()
+                .environment(appState)
+        }
+    }
+
+    @ViewBuilder
+    private func playlistContent(playlistID: String?) -> some View {
+        if let container = appState.modelContainer {
+            PlaylistWindowView(playlistID: playlistID)
+                .environment(appState)
+                .modelContainer(container)
+        }
+    }
 }

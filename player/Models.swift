@@ -10,8 +10,11 @@ import SwiftData
 final class Track {
     var id: UUID = UUID()
     var fileURL: URL
-    /// Security-scoped bookmark data for re-accessing the file after app relaunch.
+    /// Security-scoped bookmark data — kept for migration of old-style libraries only.
     var bookmarkData: Data?
+    /// Path relative to the library folder root, e.g. "Music/Artist - Title.mp3".
+    /// Empty string means the track has not yet been migrated to the portable format.
+    var relativePath: String = ""
     var title: String = ""
     var artist: String = ""
     var album: String = ""
@@ -29,13 +32,14 @@ final class Track {
     @Attribute(.externalStorage)
     var artworkData: Data?
 
-    var bpmSortValue: Double { bpm ?? 0}
+    var bpmSortValue: Double { bpm ?? 0 }
     var lastPlayedDateSortValue: Date { lastPlayedDate ?? Date.distantPast }
 
     @Relationship(inverse: \PlaylistEntry.track)
     var playlistEntries: [PlaylistEntry] = []
 
     init(
+        relativePath: String,
         fileURL: URL,
         bookmarkData: Data? = nil,
         title: String,
@@ -48,6 +52,7 @@ final class Track {
         cuePointOut: TimeInterval? = nil
     ) {
         self.id = UUID()
+        self.relativePath = relativePath
         self.fileURL = fileURL
         self.bookmarkData = bookmarkData
         self.title = title
@@ -63,13 +68,24 @@ final class Track {
         self.cuePointOut = cuePointOut
     }
 
-    /// Resolves the security-scoped bookmark and starts access.
-    /// Returns the accessible URL. Caller must call `stopAccessingSecurityScopedResource()` when done.
-    func resolveBookmark() -> URL? {
-        guard let bookmarkData else {
-            print("[Track] No bookmark data for: \(title)")
-            return nil
+    /// Returns an accessible file URL for this track.
+    ///
+    /// For portable tracks (relativePath is set), resolves against the library folder URL.
+    /// Falls back to the old per-file bookmark system for unmigrated tracks.
+    func accessibleURL(libraryFolderURL: URL? = nil) -> URL {
+        if !relativePath.isEmpty, let folderURL = libraryFolderURL {
+            return folderURL.appending(path: relativePath)
         }
+        // Migration fallback: resolve the per-file security-scoped bookmark
+        if let resolved = resolveBookmark() {
+            return resolved
+        }
+        return fileURL
+    }
+
+    /// Resolves the per-file security-scoped bookmark (used for unmigrated tracks only).
+    private func resolveBookmark() -> URL? {
+        guard let bookmarkData else { return nil }
         var isStale = false
         do {
             let url = try URL(
@@ -78,30 +94,17 @@ final class Track {
                 relativeTo: nil,
                 bookmarkDataIsStale: &isStale
             )
-
             if isStale {
-                print("[Track] Bookmark is stale for: \(title), refreshing...")
                 if let newData = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
                     self.bookmarkData = newData
                 }
             }
-
-            let didStart = url.startAccessingSecurityScopedResource()
-            print("[Track] resolveBookmark for '\(title)': url=\(url.path), didStartAccess=\(didStart), isStale=\(isStale)")
+            url.startAccessingSecurityScopedResource()
             return url
         } catch {
             print("[Track] Failed to resolve bookmark for '\(title)': \(error)")
             return nil
         }
-    }
-
-    /// Returns an accessible file URL — tries bookmark first, falls back to raw fileURL.
-    func accessibleURL() -> URL {
-        if let resolved = resolveBookmark() {
-            return resolved
-        }
-        print("[Track] Falling back to raw fileURL for '\(title)': \(fileURL.path)")
-        return fileURL
     }
 }
 
