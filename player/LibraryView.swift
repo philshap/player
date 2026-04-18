@@ -151,6 +151,8 @@ struct LibraryView: View {
     /// Incremented on sort/filter changes to force Table recreation instead of diffing 500 rows.
     @State private var tableGeneration: Int = 0
     @State private var editingTrack: Track? = nil
+    @State private var diskSpaceFree: String = ""
+    @State private var showUnmigratedAlert = false
 
     var body: some View {
         NavigationSplitView {
@@ -197,7 +199,11 @@ struct LibraryView: View {
             }
         }
         .frame(minWidth: 700, minHeight: 400)
-        .onAppear { recomputeDisplayedRows() }
+        .onAppear {
+            recomputeDisplayedRows()
+            refreshDiskSpace()
+            checkForUnmigratedTracks()
+        }
         .onChange(of: tracks.count) { oldCount, newCount in
             // Only reset scroll when tracks are added (e.g. import) so the new
             // content is visible. Deletions preserve the current scroll position.
@@ -211,6 +217,11 @@ struct LibraryView: View {
                 editingTrack = nil
                 recomputeDisplayedRows(resetScroll: false)
             }
+        }
+        .alert("Unmigrated Tracks", isPresented: $showUnmigratedAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Some tracks use the old path format and may not play on another Mac. Use File > Migrate Library to convert them to the portable format.")
         }
     }
 
@@ -277,6 +288,15 @@ struct LibraryView: View {
         }
         .listStyle(.sidebar)
         .frame(minWidth: 160)
+        .safeAreaInset(edge: .bottom) {
+            if !diskSpaceFree.isEmpty {
+                Text("\(diskSpaceFree) free")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity)
+            }
+        }
     }
 
     // MARK: - Track Table
@@ -410,8 +430,7 @@ struct LibraryView: View {
                 Button("Detect BPM") {
                     Task {
                         for track in selectedTracks {
-                            let url = track.accessibleURL()
-                            defer { url.stopAccessingSecurityScopedResource() }
+                            let url = track.accessibleURL(libraryFolderURL: appState.libraryFolderURL)
                             if let bpm = await appState.libraryManager.detectBPM(url: url) {
                                 track.bpm = bpm
                             }
@@ -464,6 +483,25 @@ struct LibraryView: View {
             appState.libraryManager.deleteTrack(track, modelContext: modelContext)
         }
         selectedTrackIDs.subtract(deletedIDs)
+        refreshDiskSpace()
+    }
+
+    private func refreshDiskSpace() {
+        guard let folderURL = appState.libraryFolderURL else { return }
+        let attrs = try? FileManager.default.attributesOfFileSystem(forPath: folderURL.path)
+        if let bytes = attrs?[.systemFreeSize] as? Int64 {
+            let formatter = ByteCountFormatter()
+            formatter.allowedUnits = [.useGB, .useMB]
+            formatter.countStyle = .file
+            diskSpaceFree = formatter.string(fromByteCount: bytes)
+        }
+    }
+
+    private func checkForUnmigratedTracks() {
+        let unmigratedCount = tracks.filter { $0.relativePath.isEmpty }.count
+        if unmigratedCount > 0 {
+            showUnmigratedAlert = true
+        }
     }
 
     // MARK: - Drag Support

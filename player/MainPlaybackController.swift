@@ -80,6 +80,9 @@ final class MainPlaybackController {
 
     // MARK: - Init
 
+    /// Set by AppState when a library folder is opened.
+    var libraryFolderURL: URL?
+
     init(audioEngine: AudioEngineManager) {
         self.audioEngine = audioEngine
     }
@@ -209,7 +212,7 @@ final class MainPlaybackController {
 
         // Slow path: full buffer not available yet (shouldn't happen during normal playback,
         // but guards against seeking before the initial load completes).
-        let url           = track.accessibleURL()
+        let url           = track.accessibleURL(libraryFolderURL: libraryFolderURL)
         let outputChannel = audioEngine.mainOutputChannel
         guard let format  = audioEngine.playerFormat else { return }
         audioEngine.stopMain()
@@ -270,7 +273,7 @@ final class MainPlaybackController {
                 preloadedBuffer    = nil
                 preloadedBufferIndex = -1
             } else {
-                buffer = try audioEngine.loadBufferForMain(url: track.accessibleURL())
+                buffer = try audioEngine.loadBufferForMain(url: track.accessibleURL(libraryFolderURL: libraryFolderURL))
             }
 
             try audioEngine.playMain(buffer) { [weak self] in
@@ -296,7 +299,7 @@ final class MainPlaybackController {
         guard nextIndex < playlist.count else { return }
 
         // Capture URL, format, and channel setting on the main actor before entering the background task.
-        let url     = playlist[nextIndex].accessibleURL()
+        let url     = playlist[nextIndex].accessibleURL(libraryFolderURL: libraryFolderURL)
         let format  = audioEngine.playerFormat!
         let channel = audioEngine.mainOutputChannel
 

@@ -52,6 +52,9 @@ final class PreviewPlaybackController {
 
     // MARK: - Init
 
+    /// Set by AppState when a library folder is opened.
+    var libraryFolderURL: URL?
+
     init(audioEngine: AudioEngineManager) {
         self.audioEngine = audioEngine
     }
@@ -75,7 +78,7 @@ final class PreviewPlaybackController {
         currentTrack = track
         duration = track.duration
 
-        let url           = track.accessibleURL()
+        let url           = track.accessibleURL(libraryFolderURL: libraryFolderURL)
         let outputChannel = audioEngine.previewOutputChannel
         guard let format  = audioEngine.playerFormat else { return }
 
@@ -186,7 +189,7 @@ final class PreviewPlaybackController {
         // This path should be rare; the load task stores loadedBuffer before
         // starting playback, so any seek arriving after that uses the fast path.
         guard let track = currentTrack else { return }
-        let url           = track.accessibleURL()
+        let url           = track.accessibleURL(libraryFolderURL: libraryFolderURL)
         let outputChannel = audioEngine.previewOutputChannel
         guard let format  = audioEngine.playerFormat else { return }
 

@@ -13,8 +13,9 @@ import UniformTypeIdentifiers
 enum LibraryError: LocalizedError {
     case fileNotFound(URL)
     case unsupportedFormat(String)
-    case duplicateTrack(URL)
+    case duplicateTrack(String)
     case metadataLoadFailed(URL, Error)
+    case noLibraryFolder
 
     var errorDescription: String? {
         switch self {
@@ -22,10 +23,12 @@ enum LibraryError: LocalizedError {
             return "File not found: \(url.lastPathComponent)"
         case .unsupportedFormat(let ext):
             return "Unsupported audio format: \(ext)"
-        case .duplicateTrack(let url):
-            return "Track already in library: \(url.lastPathComponent)"
+        case .duplicateTrack(let name):
+            return "Track already in library: \(name)"
         case .metadataLoadFailed(let url, let error):
             return "Failed to load metadata for \(url.lastPathComponent): \(error.localizedDescription)"
+        case .noLibraryFolder:
+            return "No library folder is open."
         }
     }
 }
@@ -46,88 +49,79 @@ final class LibraryManager {
         "mp3", "aac", "wav", "aiff", "aif", "m4a", "flac"
     ]
 
+    /// Set by AppState when a library folder is opened. All file operations are relative to this.
+    var libraryFolderURL: URL?
+
     // MARK: - Public API
 
-    /// Imports audio files into the library, extracting metadata from each.
-    /// Skips duplicates (files whose URL already exists in the library) and returns only newly imported tracks.
-    /// Throws on the first hard error (file not found, unsupported format).
+    /// Imports audio files into the library.
+    /// Each file is **copied** into the library's Music/ subfolder before being tracked.
+    /// Skips duplicates and returns only newly imported tracks.
     @discardableResult
     func importFiles(urls: [URL], modelContext: ModelContext) async throws -> [Track] {
-        var importedTracks: [Track] = []
+        guard let libraryFolderURL else { throw LibraryError.noLibraryFolder }
 
+        var importedTracks: [Track] = []
         for url in urls {
             do {
-                if let track = try await importFile(url, modelContext) {
+                if let track = try await importFile(url, libraryFolderURL: libraryFolderURL, modelContext: modelContext) {
                     importedTracks.append(track)
                 }
             } catch {
-                print("⚠️ Failed to import \(url): \(error)")
+                print("⚠️ Failed to import \(url.lastPathComponent): \(error)")
                 continue
             }
         }
-
         return importedTracks
     }
-    
-    private func importFile(_ url: URL, _ modelContext: ModelContext) async throws -> Track? {
-        // Gain access to security-scoped resources (e.g. from file picker)
-        let didStartAccess = url.startAccessingSecurityScopedResource()
+
+    private func importFile(_ sourceURL: URL, libraryFolderURL: URL, modelContext: ModelContext) async throws -> Track? {
+        // Gain access to the source file (e.g. from file picker)
+        let didStartAccess = sourceURL.startAccessingSecurityScopedResource()
         defer {
-            if didStartAccess {
-                url.stopAccessingSecurityScopedResource()
-            }
+            if didStartAccess { sourceURL.stopAccessingSecurityScopedResource() }
         }
 
         // Validate file exists
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw LibraryError.fileNotFound(url)
+        guard FileManager.default.fileExists(atPath: sourceURL.path) else {
+            throw LibraryError.fileNotFound(sourceURL)
         }
 
         // Validate supported format
-        let ext = url.pathExtension.lowercased()
+        let ext = sourceURL.pathExtension.lowercased()
         guard Self.supportedExtensions.contains(ext) else {
             throw LibraryError.unsupportedFormat(ext)
         }
 
-        // Check for duplicates
-        let fileURL = url.standardizedFileURL
+        // Determine destination path in library's Music folder
+        let musicFolder = libraryFolderURL.appending(path: "Music")
+        let destURL = uniqueDestinationURL(in: musicFolder, for: sourceURL)
+        let relativePath = "Music/\(destURL.lastPathComponent)"
+
+        // Check for duplicates by relative path
         let descriptor = FetchDescriptor<Track>(
-            predicate: #Predicate<Track> { track in
-                track.fileURL == fileURL
-            }
+            predicate: #Predicate<Track> { $0.relativePath == relativePath }
         )
         let existingCount = (try? modelContext.fetchCount(descriptor)) ?? 0
         if existingCount > 0 {
-            // Skip duplicates silently rather than failing the whole import
             return nil
         }
 
-        // Create security-scoped bookmark for persistent access
-        let bookmark: Data?
-        do {
-            bookmark = try url.bookmarkData(
-                options: .withSecurityScope,
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            )
-            print("[LibraryManager] Created bookmark (\(bookmark!.count) bytes) for: \(url.lastPathComponent)")
-        } catch {
-            print("[LibraryManager] Failed to create bookmark for \(url.lastPathComponent): \(error)")
-            bookmark = nil
-        }
+        // Copy the file into the library's Music folder
+        try FileManager.default.createDirectory(at: musicFolder, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: sourceURL, to: destURL)
 
-        // Extract metadata
-        let metadata = await extractMetadata(from: url)
+        // Extract metadata from the copied file (no bookmark needed — folder access is active)
+        let metadata = await extractMetadata(from: destURL)
 
-        // Auto-detect BPM if not present in file tags
         var bpm = metadata.bpm
         if bpm == nil {
-            bpm = await detectBPM(url: url)
+            bpm = await detectBPM(url: destURL)
         }
 
         let track = Track(
-            fileURL: fileURL,
-            bookmarkData: bookmark,
+            relativePath: relativePath,
+            fileURL: destURL,
             title: metadata.title,
             artist: metadata.artist,
             album: metadata.album,
@@ -140,13 +134,25 @@ final class LibraryManager {
         return track
     }
 
+    /// Returns a URL in `folder` that doesn't conflict with existing files.
+    /// Appends " (2)", " (3)", … to the base name if needed.
+    private func uniqueDestinationURL(in folder: URL, for sourceURL: URL) -> URL {
+        let base = sourceURL.deletingPathExtension().lastPathComponent
+        let ext = sourceURL.pathExtension
+        var candidate = folder.appending(path: sourceURL.lastPathComponent)
+        var counter = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = folder.appending(path: "\(base) (\(counter)).\(ext)")
+            counter += 1
+        }
+        return candidate
+    }
+
     /// Re-extracts metadata and artwork from the file for the given tracks.
     /// Preserves user-edited fields: rating, play count, last played date, cue points.
     func refreshMetadata(for tracks: [Track], modelContext: ModelContext) async {
         for track in tracks {
-            // Resolve bookmark to get a security-scoped URL with access already started
-            let url = track.accessibleURL()
-            defer { url.stopAccessingSecurityScopedResource() }
+            let url = track.accessibleURL(libraryFolderURL: libraryFolderURL)
 
             guard FileManager.default.fileExists(atPath: url.path) else {
                 print("⚠️ File not found during refresh: \(url.lastPathComponent)")
@@ -163,9 +169,16 @@ final class LibraryManager {
         }
     }
 
-    /// Deletes a track from the library and removes all associated playlist entries.
+    /// Deletes a track from the library: moves its audio file to the Trash, then removes the record.
     func deleteTrack(_ track: Track, modelContext: ModelContext) {
-        // PlaylistEntry has a relationship to Track; remove entries first
+        // Move the audio file to Trash if it's inside the library folder
+        if !track.relativePath.isEmpty, let folderURL = libraryFolderURL {
+            let fileURL = folderURL.appending(path: track.relativePath)
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                try? FileManager.default.trashItem(at: fileURL, resultingItemURL: nil)
+            }
+        }
+
         for entry in track.playlistEntries {
             modelContext.delete(entry)
         }
@@ -186,10 +199,7 @@ final class LibraryManager {
     private func extractMetadata(from url: URL) async -> TrackMetadata {
         let asset = AVURLAsset(url: url)
 
-        // Load duration
         let duration: TimeInterval = (try? await asset.load(.duration).seconds) ?? 0
-
-        // Load common metadata
         let metadataItems: [AVMetadataItem] = (try? await asset.load(.commonMetadata)) ?? []
 
         let title = await metadataValue(for: .commonIdentifierTitle, in: metadataItems)
@@ -197,7 +207,6 @@ final class LibraryManager {
         let artist = await metadataValue(for: .commonIdentifierArtist, in: metadataItems) ?? ""
         let album = await metadataValue(for: .commonIdentifierAlbumName, in: metadataItems) ?? ""
 
-        // Extract BPM from ID3 or iTunes metadata
         var bpm: Double?
         if let id3Items = try? await asset.loadMetadata(for: .id3Metadata) {
             if let bpmString = await metadataValue(for: .id3MetadataBeatsPerMinute, in: id3Items) {
@@ -211,7 +220,6 @@ final class LibraryManager {
         }
         if bpm == 0 { bpm = nil }
 
-        // Extract artwork
         let artworkData = await extractArtwork(from: metadataItems)
 
         return TrackMetadata(
@@ -234,7 +242,6 @@ final class LibraryManager {
         return thumbnailData(from: image, maxSize: 200)
     }
 
-    /// Resizes an image to fit within maxSize and returns JPEG data.
     private func thumbnailData(from image: NSImage, maxSize: CGFloat) -> Data? {
         let size = image.size
         guard size.width > 0, size.height > 0 else { return nil }
@@ -259,8 +266,6 @@ final class LibraryManager {
     // MARK: - BPM Detection
 
     /// Estimates the BPM of an audio file using energy-envelope autocorrelation.
-    /// Reads up to 60 seconds of audio and runs the computation on a utility thread.
-    /// Returns nil if the file cannot be read or the tempo cannot be determined.
     func detectBPM(url: URL) async -> Double? {
         await Task.detached(priority: .utility) {
             Self.computeBPM(url: url)
@@ -274,7 +279,6 @@ final class LibraryManager {
         let sampleRate = format.sampleRate
         let channels = Int(format.channelCount)
 
-        // Read up to 60 s to keep this fast
         let maxFrames = AVAudioFrameCount(min(audioFile.length, Int64(sampleRate * 60)))
         guard maxFrames > 0,
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: maxFrames),
@@ -284,7 +288,6 @@ final class LibraryManager {
         let frameCount = Int(buffer.frameLength)
         guard frameCount > 0 else { return nil }
 
-        // Mix to mono using vDSP
         var mono = [Float](repeating: 0, count: frameCount)
         for ch in 0..<channels {
             vDSP_vadd(mono, 1, floatData[ch], 1, &mono, 1, vDSP_Length(frameCount))
@@ -292,7 +295,6 @@ final class LibraryManager {
         var normFactor = Float(1.0 / Double(channels))
         vDSP_vsmul(mono, 1, &normFactor, &mono, 1, vDSP_Length(frameCount))
 
-        // Compute RMS energy in overlapping windows
         let windowSize = 1024
         let hopSize = 512
         let numWindows = (frameCount - windowSize) / hopSize
@@ -306,16 +308,14 @@ final class LibraryManager {
             energy[w] = rms
         }
 
-        // Half-wave rectified first difference (onset strength)
         var onset = [Float](repeating: 0, count: numWindows)
         for i in 1..<numWindows {
             onset[i] = max(0, energy[i] - energy[i - 1])
         }
 
-        // Autocorrelation over the BPM-valid lag range
         let hopDuration = Double(hopSize) / sampleRate
-        let minLag = max(1, Int(0.25 / hopDuration))  // ~240 BPM upper bound
-        let maxLag = Int(1.2 / hopDuration)            // ~50  BPM lower bound
+        let minLag = max(1, Int(0.25 / hopDuration))
+        let maxLag = Int(1.2 / hopDuration)
         guard maxLag < numWindows else { return nil }
 
         var bestLag = 0
@@ -339,8 +339,6 @@ final class LibraryManager {
         guard bestLag > 0 else { return nil }
 
         var bpm = 60.0 / (Double(bestLag) * hopDuration)
-
-        // Fold into the common DJ BPM range (70–175)
         while bpm < 70  { bpm *= 2 }
         while bpm > 175 { bpm /= 2 }
 
