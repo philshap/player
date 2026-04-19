@@ -26,7 +26,6 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 
 ### Audio Reliability
 - Investigate and prevent audio glitches during performance
-- Pre-buffer next track before auto-advance
 - Monitor audio engine for underruns
 - Possibly use higher-priority thread for audio scheduling
 
@@ -54,13 +53,3 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 
 ---
 
-## Low Priority / High Difficulty
-
-### Portable Library
-- Bundle app + library + audio files onto a removable drive or self-contained folder
-- Replace per-track bookmarks + absolute URLs with a single folder-level bookmark and relative paths
-- Store SwiftData at a configurable URL within the library folder
-- Copy-on-import: audio files copied into Music/ subfolder
-- Launch onboarding: "New Library" / "Open Library" panel
-- Migration path for existing libraries
-- See PORTABLE-LIBRARY.md for detailed design

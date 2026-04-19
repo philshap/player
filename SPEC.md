@@ -13,9 +13,10 @@ A DJ-oriented audio player for macOS (iOS later) focused on playlist curation an
 
 ### Library
 - The app maintains its own music library, independent of the system music library
-- Users import local audio files into the library
+- Users import local audio files into the library; files are copied into the library folder on import
 - Library stores and displays track metadata (title, artist, album, genre, BPM, duration, etc.)
 - Library is searchable and sortable by metadata fields
+- The library is a self-contained folder (SQLite store + Music/ subfolder) that can be placed on a USB drive and used on any Mac — see [PORTABLE-LIBRARY.md](PORTABLE-LIBRARY.md) for the full design
 
 ### Playlists
 - Users can create any number of playlists
@@ -97,6 +98,7 @@ The primary concern is preventing accidental modifications during live playback 
 - Built on AVFoundation / AVAudioEngine
 - Two AVAudioPlayerNodes: one for main output, one for preview
 - All audio pre-decoded to in-memory AVAudioPCMBuffer before scheduling; eliminates disk I/O on the render thread
+- Next track pre-buffered in the background before auto-advance for seamless transitions
 - Mono mixdown of both signals; channel routing enforced by buffer content (not pan)
 - Channel routing: main → left (or both), preview → right (or both)
 - Output through system default audio device
@@ -105,7 +107,7 @@ The primary concern is preventing accidental modifications during live playback 
 ## Data Model
 
 ### Track
-- File path / URL (local file reference, security-scoped bookmark for sandbox persistence)
+- Relative path within the library folder (resolved at runtime against the library folder URL)
 - Title, artist, album
 - Genre
 - Duration
@@ -129,9 +131,9 @@ The primary concern is preventing accidental modifications during live playback 
 
 ### Library
 - Collection of all imported tracks
-- Persisted locally (SwiftData)
+- Persisted as a portable folder: SwiftData store (`library.sqlite`) + `Music/` subfolder, all at a user-chosen location
+- Single folder-level security-scoped bookmark stored in UserDefaults; tracks use relative paths within the folder
 - Future consideration: shared document state between platforms via iCloud
-  - Note: true cross-device sync may require importing audio data into the app's storage rather than storing file path references, since file paths are not portable across devices
 
 ## File Sources
 
