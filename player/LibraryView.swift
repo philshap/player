@@ -147,6 +147,8 @@ struct LibraryView: View {
     @State private var isImporting = false
     @State private var importError: String?
     @State private var showImportError = false
+    /// Full set of TrackRows mirroring `tracks`; rebuilt only when track data changes.
+    @State private var allRows: [TrackRow] = []
     @State private var displayedRows: [TrackRow] = []
     /// Incremented on sort/filter changes to force Table recreation instead of diffing 500 rows.
     @State private var tableGeneration: Int = 0
@@ -200,22 +202,22 @@ struct LibraryView: View {
         }
         .frame(minWidth: 700, minHeight: 400)
         .onAppear {
-            recomputeDisplayedRows()
+            recomputeAllRows()
             refreshDiskSpace()
             checkForUnmigratedTracks()
         }
         .onChange(of: tracks.count) { oldCount, newCount in
             // Only reset scroll when tracks are added (e.g. import) so the new
             // content is visible. Deletions preserve the current scroll position.
-            recomputeDisplayedRows(resetScroll: newCount > oldCount)
+            recomputeAllRows(resetScroll: newCount > oldCount)
         }
-        .onChange(of: tracks.map(\.rating)) { recomputeDisplayedRows(resetScroll: false) }
-        .onChange(of: searchText) { recomputeDisplayedRows() }
-        .onChange(of: sortOrder) { recomputeDisplayedRows() }
+        .onChange(of: tracks.map(\.rating)) { recomputeAllRows(resetScroll: false) }
+        .onChange(of: searchText) { recomputeFilteredRows(resetScroll: false) }
+        .onChange(of: sortOrder) { recomputeFilteredRows() }
         .sheet(item: $editingTrack) { track in
             TrackMetadataEditorView(track: track) {
                 editingTrack = nil
-                recomputeDisplayedRows(resetScroll: false)
+                recomputeAllRows(resetScroll: false)
             }
         }
         .alert("Unmigrated Tracks", isPresented: $showUnmigratedAlert) {
@@ -225,24 +227,34 @@ struct LibraryView: View {
         }
     }
 
-    private func recomputeDisplayedRows(resetScroll: Bool = true) {
-        let source = tracks
-        let filtered: [Track]
+    /// Rebuilds allRows from the SwiftData `tracks` array, then re-applies the
+    /// current filter and sort. Call this when track data changes (import, edit,
+    /// rating update). Avoids calling this on every keystroke.
+    private func recomputeAllRows(resetScroll: Bool = true) {
+        allRows = tracks.map { TrackRow($0) }
+        recomputeFilteredRows(resetScroll: resetScroll)
+    }
+
+    /// Filters and sorts the cached `allRows` without rebuilding TrackRow objects.
+    /// Call this for search text or sort order changes.
+    private func recomputeFilteredRows(resetScroll: Bool = true) {
+        let filtered: [TrackRow]
         if searchText.isEmpty {
-            filtered = source
+            filtered = allRows
         } else {
             let query = searchText.localizedLowercase
-            filtered = source.filter { track in
-                track.title.localizedCaseInsensitiveContains(query)
-                || track.artist.localizedCaseInsensitiveContains(query)
-                || track.album.localizedCaseInsensitiveContains(query)
+            filtered = allRows.filter { row in
+                row.title.localizedCaseInsensitiveContains(query)
+                || row.artist.localizedCaseInsensitiveContains(query)
+                || row.album.localizedCaseInsensitiveContains(query)
             }
         }
-        // Map to value types FIRST, then sort — avoids @Observable property access during sort
-        let rows = filtered.map { TrackRow($0) }
-        let sorted = rows.sorted(using: sortOrder)
+        let sorted = filtered.sorted(using: sortOrder)
+        // SwiftUI Table is fast at fresh renders but freezes diffing large insertions.
+        // Force recreation whenever rows are being added; let it diff when shrinking.
+        let needsRecreation = resetScroll || sorted.count > displayedRows.count
         displayedRows = sorted
-        if resetScroll {
+        if needsRecreation {
             tableGeneration += 1
         }
     }
@@ -390,11 +402,11 @@ struct LibraryView: View {
                     Divider()
                     Button("Set Cue In at Preview Position") {
                         firstTrack.cuePointIn = appState.previewPlayback.currentTime
-                        recomputeDisplayedRows(resetScroll: false)
+                        recomputeAllRows(resetScroll: false)
                     }
                     Button("Set Cue Out at Preview Position") {
                         firstTrack.cuePointOut = appState.previewPlayback.currentTime
-                        recomputeDisplayedRows(resetScroll: false)
+                        recomputeAllRows(resetScroll: false)
                     }
                 }
 
@@ -402,7 +414,7 @@ struct LibraryView: View {
                     Button("Clear Cue Points") {
                         firstTrack.cuePointIn = nil
                         firstTrack.cuePointOut = nil
-                        recomputeDisplayedRows(resetScroll: false)
+                        recomputeAllRows(resetScroll: false)
                     }
                 }
 
@@ -435,14 +447,14 @@ struct LibraryView: View {
                                 track.bpm = bpm
                             }
                         }
-                        recomputeDisplayedRows(resetScroll: false)
+                        recomputeAllRows(resetScroll: false)
                     }
                 }
 
                 Button("Refresh Metadata") {
                     Task {
                         await appState.libraryManager.refreshMetadata(for: selectedTracks, modelContext: modelContext)
-                        recomputeDisplayedRows(resetScroll: false)
+                        recomputeAllRows(resetScroll: false)
                     }
                 }
 
