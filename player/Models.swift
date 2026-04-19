@@ -99,7 +99,7 @@ final class Track {
                     self.bookmarkData = newData
                 }
             }
-            url.startAccessingSecurityScopedResource()
+            _ = url.startAccessingSecurityScopedResource()
             return url
         } catch {
             print("[Track] Failed to resolve bookmark for '\(title)': \(error)")
