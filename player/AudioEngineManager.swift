@@ -439,6 +439,19 @@ final class AudioEngineManager {
         playerQueue.async { [previewPlayer] in previewPlayer.stop() }
     }
 
+    /// Schedules `buffer` on the preview player without starting playback.
+    /// Call `resumePreview()` afterwards to begin playing from the prepared position.
+    func prepareSeekPreview(_ buffer: AVAudioPCMBuffer) throws {
+        pendingSeekPreview?.cancel()
+        pendingSeekPreview = nil
+        try ensureEngineRunning()
+        isPreviewPlaying = false
+        playerQueue.async { [previewPlayer] in
+            previewPlayer.stop()
+            previewPlayer.scheduleBuffer(buffer)
+        }
+    }
+
     func pausePreview() {
         isPreviewPlaying = false
         playerQueue.async { [previewPlayer] in previewPlayer.pause() }
