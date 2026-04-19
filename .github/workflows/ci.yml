@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Run tests
+        run: |
+          xcodebuild test \
+            -project player/player.xcodeproj \
+            -scheme player \
+            -destination 'platform=macOS' \
+            -only-testing:playerTests \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty || xcodebuild test \
+              -project player/player.xcodeproj \
+              -scheme player \
+              -destination 'platform=macOS' \
+              -only-testing:playerTests \
+              CODE_SIGNING_ALLOWED=NO
+
+      - name: Build Release
+        run: |
+          xcodebuild build \
+            -project player/player.xcodeproj \
+            -scheme player \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package app
+        run: |
+          APP_PATH=$(find build/DerivedData -name "player.app" -type d | head -1)
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" build/player.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: player-${{ github.sha }}
+          path: build/player.zip
+          retention-days: 14
