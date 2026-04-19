@@ -339,8 +339,8 @@ final class LibraryManager {
         guard bestLag > 0 else { return nil }
 
         var bpm = 60.0 / (Double(bestLag) * hopDuration)
-        while bpm < 70  { bpm *= 2 }
-        while bpm > 175 { bpm /= 2 }
+        while bpm < 50  { bpm *= 2 }
+        while bpm > 275 { bpm /= 2 }
 
         return round(bpm)
     }
