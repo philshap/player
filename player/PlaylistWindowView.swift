@@ -156,7 +156,7 @@ struct PlaylistWindowView: View {
     @ViewBuilder
     private func trackContextMenu(index: Int, track: Track, tracks: [Track], playlist: Playlist) -> some View {
         Button("Play from Here") {
-            appState.mainPlayback.loadTracks(tracks)
+            appState.mainPlayback.loadPlaylist(playlist)
             appState.mainPlayback.play(from: index)
         }
 

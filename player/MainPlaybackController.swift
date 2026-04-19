@@ -85,9 +85,14 @@ final class MainPlaybackController {
 
     init(audioEngine: AudioEngineManager) {
         self.audioEngine = audioEngine
+        startTrackObservation()
     }
 
     deinit {
+        if let obs = playlistChangeObserver {
+            NotificationCenter.default.removeObserver(obs)
+        }
+        bufferedTrackObservation?.cancel()
         prefetchTask?.cancel()
         positionTimer?.invalidate()
         gapTimer?.invalidate()
@@ -97,11 +102,15 @@ final class MainPlaybackController {
 
     func loadPlaylist(_ playlistModel: Playlist) {
         stop()
+        activePlaylistModel = playlistModel
         playlist = playlistModel.orderedTracks
+        startPlaylistChangeObserver()
     }
 
     func loadTracks(_ tracks: [Track]) {
         stop()
+        activePlaylistModel = nil
+        startPlaylistChangeObserver()
         playlist = tracks
     }
 
@@ -327,6 +336,9 @@ final class MainPlaybackController {
         recordPlayIfNeeded()
         seekTask?.cancel()
         seekTask = nil
+
+        // Claim the preloaded buffer before cancelPrefetch() wipes it.
+        let cachedBuffer: AVAudioPCMBuffer? = (preloadedBufferIndex == index) ? preloadedBuffer : nil
         cancelPrefetch()
         cancelChain()
 
@@ -341,14 +353,10 @@ final class MainPlaybackController {
         currentTime       = 0
 
         do {
-            // Load the FULL buffer first (for waveform display in the future)
             let fullBuffer: AVAudioPCMBuffer
-            if preloadedBufferIndex == index, let cached = preloadedBuffer {
-                fullBuffer         = cached
-                preloadedBuffer    = nil
-                preloadedBufferIndex = -1
+            if let cached = cachedBuffer {
+                fullBuffer = cached
             } else {
-                // Load full track buffer
                 fullBuffer = try audioEngine.loadBufferForMain(
                     url: track.accessibleURL(libraryFolderURL: libraryFolderURL)
                 )
@@ -452,9 +460,11 @@ final class MainPlaybackController {
     private func transitionToChained(index: Int, generation: Int) {
         recordPlayIfNeeded()
 
-        chainedNextIndex  = nil
-        currentFullBuffer = chainedBuffer   // promote the chained buffer for seeking
-        chainedBuffer     = nil
+        chainedNextIndex     = nil
+        currentFullBuffer    = chainedBuffer   // promote the chained buffer for seeking
+        chainedBuffer        = nil
+        preloadedBuffer      = nil
+        preloadedBufferIndex = -1
 
         let track             = playlist[index]
         currentTrackIndex     = index
@@ -482,6 +492,18 @@ final class MainPlaybackController {
 
     /// Auto-advances after a track ends naturally (no chained successor).
     private func autoAdvance() {
+        // Re-read the authoritative playlist from the model before deciding what to do.
+        // Guards against the notification handler and the audio completion callback
+        // racing on the main thread.
+        if let model = activePlaylistModel {
+            let fresh = model.orderedTracks
+            playlist = fresh
+            if let currentID = currentTrack?.id,
+               let newIndex = fresh.firstIndex(where: { $0.id == currentID }) {
+                currentTrackIndex = newIndex
+            }
+        }
+
         let next = currentTrackIndex + 1
         if next < playlist.count {
             if gapDuration > 0 {
@@ -553,6 +575,223 @@ final class MainPlaybackController {
         // Note: we do NOT dequeue the chained buffer from the player node here.
         // If the player is stopped (e.g. stop()/seek()) the buffer queue is cleared
         // automatically by AVAudioPlayerNode.stop().
+    }
+    
+    // MARK: - Playlist Model Observation
+
+    private var activePlaylistModel: Playlist?
+    private var playlistChangeObserver: NSObjectProtocol?
+
+    private func startPlaylistChangeObserver() {
+        if let obs = playlistChangeObserver {
+            NotificationCenter.default.removeObserver(obs)
+            playlistChangeObserver = nil
+        }
+        guard activePlaylistModel != nil else { return }
+        playlistChangeObserver = NotificationCenter.default.addObserver(
+            forName: .playlistDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self,
+                  let playlistID = notification.userInfo?["playlistID"] as? UUID,
+                  playlistID == self.activePlaylistModel?.id else { return }
+            self.syncPlaylistFromModel()
+        }
+    }
+
+    private func syncPlaylistFromModel() {
+        guard let model = activePlaylistModel else { return }
+        let newTracks = model.orderedTracks
+        playlist = newTracks
+
+        if let currentID = currentTrack?.id,
+           let newIndex = newTracks.firstIndex(where: { $0.id == currentID }) {
+            currentTrackIndex = newIndex
+        }
+
+        // Revalidate or cancel the buffered track.
+        handleBufferedTrackChanged()
+
+        // If playing past the old end of the playlist and new tracks are now available,
+        // start prefetching so the transition can be gapless.
+        if isPlaying, preloadedBufferIndex < 0, chainedNextIndex == nil {
+            let nextIndex = currentTrackIndex + 1
+            if nextIndex < playlist.count {
+                prefetchAndChain(nextIndex: nextIndex, generation: playbackGeneration)
+            }
+        }
+    }
+
+    // MARK: - Track & Playlist Change Observation
+
+    /// Observation tracking for the buffered next track
+    private var bufferedTrackObservation: Task<Void, Never>?
+    
+    /// Cached state to detect actual changes (not just re-observation)
+    private var lastObservedBufferedTrackID: UUID?
+    private var lastObservedCuePoints: (cueIn: TimeInterval?, cueOut: TimeInterval?)?
+    private var lastObservedCurrentTrackID: UUID?
+    private var lastObservedBufferedIndex: Int?
+    
+    /// Starts observing changes to the prefetched next track using Swift Observation
+    private func startTrackObservation() {
+        // Start a background task that sets up observation tracking
+        bufferedTrackObservation = Task { @MainActor in
+            while !Task.isCancelled {
+                await observeBufferedTrack()
+            }
+        }
+    }
+    
+    /// Observes the buffered track using withObservationTracking
+    @MainActor
+    private func observeBufferedTrack() async {
+        // Wait for a change to be detected
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            withObservationTracking {
+                // Access the properties we want to observe
+                // This registers them with the observation system
+                
+                // Observe current track (to detect when its position changes)
+                if let current = currentTrack {
+                    _ = current.id
+                }
+                
+                // Observe buffered track's cue points
+                if let bufferedIndex = chainedNextIndex ?? (preloadedBufferIndex >= 0 ? preloadedBufferIndex : nil),
+                   bufferedIndex < playlist.count {
+                    let track = playlist[bufferedIndex]
+                    // Access the properties to register observation
+                    _ = track.cuePointIn
+                    _ = track.cuePointOut
+                    _ = track.id
+                }
+                
+                // Observe the playlist array - access individual track IDs to detect reordering
+                _ = playlist.count
+                for track in playlist {
+                    _ = track.id
+                }
+            } onChange: {
+                // This closure is called when any observed property changes
+                Task { @MainActor in
+                    self.handleBufferedTrackChanged()
+                    continuation.resume()
+                }
+            }
+        }
+    }
+    
+    /// Called when the buffered track or playlist changes
+    @MainActor
+    private func handleBufferedTrackChanged() {
+        // No buffered track to monitor
+        guard preloadedBufferIndex >= 0 || chainedNextIndex != nil else { 
+            // Clear cached state
+            lastObservedBufferedTrackID = nil
+            lastObservedCuePoints = nil
+            lastObservedCurrentTrackID = nil
+            lastObservedBufferedIndex = nil
+            return 
+        }
+        
+        let bufferedIndex = chainedNextIndex ?? preloadedBufferIndex
+        
+        // Check if buffered track is out of range
+        guard bufferedIndex >= 0 && bufferedIndex < playlist.count else {
+            print("[MainPlaybackController] Buffered track out of range, canceling")
+            if chainedNextIndex != nil {
+                cancelChain()
+            } else {
+                cancelPrefetch()
+            }
+            lastObservedBufferedTrackID = nil
+            lastObservedCuePoints = nil
+            lastObservedCurrentTrackID = nil
+            lastObservedBufferedIndex = nil
+            return
+        }
+        
+        let bufferedTrack = playlist[bufferedIndex]
+        let currentCuePoints = (cueIn: bufferedTrack.cuePointIn, cueOut: bufferedTrack.cuePointOut)
+        
+        // First time observing - just cache the state without invalidating
+        guard let lastBufferedID = lastObservedBufferedTrackID,
+              let lastCurrentID = lastObservedCurrentTrackID else {
+            lastObservedBufferedTrackID = bufferedTrack.id
+            lastObservedCuePoints = currentCuePoints
+            lastObservedCurrentTrackID = currentTrack?.id
+            lastObservedBufferedIndex = bufferedIndex
+            return
+        }
+        
+        // Check what actually changed
+        let currentTrackChanged = lastCurrentID != currentTrack?.id
+        let bufferedTrackChanged = lastBufferedID != bufferedTrack.id
+        
+        // If ONLY the current track changed (normal playback transition), update cache without invalidating
+        // The buffered track should remain the same during normal transitions
+        if currentTrackChanged && !bufferedTrackChanged {
+            // Normal playback: current track advanced, buffered track is now playing
+            // Just update the cached current track ID
+            lastObservedCurrentTrackID = currentTrack?.id
+            return
+        }
+        
+        // Now check for actual issues that require invalidation
+        var needsInvalidation = false
+        var changeReason = ""
+        
+        // Determine what the buffered index SHOULD be based on the current track's position in playlist
+        if let currentTrackID = currentTrack?.id,
+           let actualCurrentIndex = playlist.firstIndex(where: { $0.id == currentTrackID }) {
+            
+            let expectedBufferedIndex = actualCurrentIndex + 1
+            
+            // The buffered index doesn't match what we expect
+            if bufferedIndex != expectedBufferedIndex {
+                // This means the playlist was reordered or the current track moved
+                needsInvalidation = true
+                changeReason = "playlist reordered: current track now at index \(actualCurrentIndex), buffered should be \(expectedBufferedIndex) but is \(bufferedIndex)"
+            }
+            // The buffered track's identity changed (track at that index was replaced)
+            else if bufferedTrackChanged {
+                needsInvalidation = true
+                changeReason = "track at index \(bufferedIndex) was replaced"
+            }
+            // Cue points changed on the buffered track
+            else if let lastCuePoints = lastObservedCuePoints,
+                    (lastCuePoints.cueIn != currentCuePoints.cueIn || lastCuePoints.cueOut != currentCuePoints.cueOut) {
+                needsInvalidation = true
+                changeReason = "cue points changed on buffered track"
+            }
+        }
+        
+        // Update cached state
+        lastObservedBufferedTrackID = bufferedTrack.id
+        lastObservedCuePoints = currentCuePoints
+        lastObservedCurrentTrackID = currentTrack?.id
+        lastObservedBufferedIndex = bufferedIndex
+        
+        // Only invalidate if something actually changed that affects playback
+        if needsInvalidation {
+            print("[MainPlaybackController] Buffered track invalidated: \(changeReason)")
+            
+            if chainedNextIndex != nil {
+                cancelChain()
+            } else {
+                cancelPrefetch()
+            }
+            
+            // Restart prefetch with the correct next track
+            if isPlaying, let currentIndex = playlist.firstIndex(where: { $0.id == currentTrack?.id }) {
+                let nextIndex = currentIndex + 1
+                if nextIndex < playlist.count {
+                    prefetchAndChain(nextIndex: nextIndex, generation: playbackGeneration)
+                }
+            }
+        }
     }
 
     // MARK: - Position Timer

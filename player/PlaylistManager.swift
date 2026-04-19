@@ -6,6 +6,10 @@
 import Foundation
 import SwiftData
 
+extension Notification.Name {
+    static let playlistDidChange = Notification.Name("PlayerPlaylistDidChange")
+}
+
 @Observable
 final class PlaylistManager {
 
@@ -39,6 +43,7 @@ final class PlaylistManager {
             modelContext.insert(PlaylistEntry(track: track, playlist: playlist, sortOrder: nextSortOrder))
         }
         playlist.dateModified = Date()
+        notify(playlist)
     }
 
     func removeTrack(at index: Int, from playlist: Playlist, modelContext: ModelContext) {
@@ -55,6 +60,7 @@ final class PlaylistManager {
         }
 
         playlist.dateModified = Date()
+        notify(playlist)
     }
 
     func moveTrack(in playlist: Playlist, from sourceIndex: Int, to destinationIndex: Int) {
@@ -71,5 +77,14 @@ final class PlaylistManager {
         }
 
         playlist.dateModified = Date()
+        notify(playlist)
+    }
+
+    private func notify(_ playlist: Playlist) {
+        NotificationCenter.default.post(
+            name: .playlistDidChange,
+            object: nil,
+            userInfo: ["playlistID": playlist.id]
+        )
     }
 }
