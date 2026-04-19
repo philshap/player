@@ -22,13 +22,13 @@ jobs:
       - name: Run tests
         run: |
           xcodebuild test \
-            -project player/player.xcodeproj \
+            -project player.xcodeproj \
             -scheme player \
             -destination 'platform=macOS' \
             -only-testing:playerTests \
             CODE_SIGNING_ALLOWED=NO \
             | xcpretty || xcodebuild test \
-              -project player/player.xcodeproj \
+              -project player.xcodeproj \
               -scheme player \
               -destination 'platform=macOS' \
               -only-testing:playerTests \
@@ -37,7 +37,7 @@ jobs:
       - name: Build Release
         run: |
           xcodebuild build \
-            -project player/player.xcodeproj \
+            -project player.xcodeproj \
             -scheme player \
             -configuration Release \
             -destination 'platform=macOS' \
