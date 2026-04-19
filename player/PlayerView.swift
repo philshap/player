@@ -38,8 +38,7 @@ struct PlayerView: View {
 
     private var mainPlaybackSection: some View {
         let main = appState.mainPlayback
-        let engine  = appState.audioEngine
-        let isStereo = engine.mainOutputChannel == .both
+        let isStereo = main.outputChannel == .both
 
         return VStack(spacing: 8) {
             HStack {
@@ -48,7 +47,7 @@ struct PlayerView: View {
                     .font(.headline)
                 Spacer()
                 Button {
-                    engine.mainOutputChannel = isStereo ? .left : .both
+                    main.outputChannel = isStereo ? .left : .both
                 } label: {
                     Image(systemName: isStereo ? "speaker.2.fill" : "speaker.fill")
                         .font(.caption)
@@ -140,8 +139,7 @@ struct PlayerView: View {
 
     private var previewSection: some View {
         let preview = appState.previewPlayback
-        let engine  = appState.audioEngine
-        let isStereo = engine.previewOutputChannel == .both
+        let isStereo = preview.outputChannel == .both
 
         return VStack(spacing: 8) {
             HStack {
@@ -150,7 +148,7 @@ struct PlayerView: View {
                     .font(.headline)
                 Spacer()
                 Button {
-                    engine.previewOutputChannel = isStereo ? .right : .both
+                    preview.outputChannel = isStereo ? .right : .both
                 } label: {
                     Image(systemName: isStereo ? "speaker.2.fill" : "speaker.fill")
                         .font(.caption)

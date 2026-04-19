@@ -9,6 +9,12 @@ import Observation
 
 /// Controls playlist playback on the main (left-channel) output.
 ///
+/// Extends `PlaybackController` (single-track machinery) with:
+///   - An ordered playlist (with reorder-aware observation of the owning model).
+///   - A prefetch-and-chain mechanism for gapless track-to-track transitions.
+///   - A configurable inter-track gap (with countdown state for the UI).
+///   - Play-count tracking (increments `Track.playCount` once per actual playback).
+///
 /// ### Reliability design
 /// Each track is fully pre-loaded into an `AVAudioPCMBuffer` before playback begins,
 /// eliminating disk I/O on the audio render thread. While a track is playing, the next
@@ -17,74 +23,52 @@ import Observation
 /// tracks is gapless — no main-thread dispatch or disk access occurs at the boundary.
 ///
 /// If the pre-fetch task does not complete before the current track ends (e.g. the
-/// track was very short or the disk was slow), the controller falls back to a
-/// synchronous load in `playTrack(at:)` to keep things working correctly.
+/// track was very short or the disk was slow), the controller falls back to loading
+/// on demand to keep things working correctly.
 @Observable
-final class MainPlaybackController {
+final class MainPlaybackController: PlaybackController {
 
-    // MARK: - Dependencies
+    // MARK: - Playlist
 
-    private let audioEngine: AudioEngineManager
-
-    // MARK: - Observable State
-
-    private(set) var playlist:           [Track]        = []
-    private(set) var currentTrack:       Track?
-    private(set) var currentTrackIndex:  Int            = 0
-    private(set) var isPlaying:          Bool           = false
-    private(set) var currentTime:        TimeInterval   = 0
-    private(set) var duration:           TimeInterval   = 0
+    private(set) var playlist:          [Track] = []
+    private(set) var currentTrackIndex: Int     = 0
 
     // MARK: - Inter-track Gap
 
     var gapDuration: TimeInterval = 0
-    private(set) var isInGap:      Bool           = false
-    private(set) var gapRemaining: TimeInterval   = 0
+    private(set) var isInGap:      Bool         = false
+    private(set) var gapRemaining: TimeInterval = 0
 
-    // MARK: - Internal Playback State
+    @ObservationIgnored private var gapTimer: Timer?
 
-    private var seekFrameOffset:       AVAudioFramePosition = 0
-    private var positionTimer:         Timer?
-    private var gapTimer:              Timer?
-    /// Cancellable task for background buffer loads during seek.
-    private var seekTask:              Task<Void, Never>?
-
-    /// Incremented on every play/seek/stop so stale completion callbacks are discarded.
-    private var playbackGeneration:    Int  = 0
+    // MARK: - Play-Count Tracking
 
     /// Set to `true` once the current track's play has been recorded. Reset when a new
     /// track starts. Prevents the same track being counted more than once regardless of
     /// how many completion callbacks fire.
-    private var currentTrackPlayRecorded = false
+    @ObservationIgnored private var currentTrackPlayRecorded = false
 
     // MARK: - Pre-fetch & Seamless Chaining
 
-    /// Full decoded buffer for the current track — kept in memory so seeks can
-    /// slice it without re-reading from disk or resolving bookmarks.
-    private var currentFullBuffer:    AVAudioPCMBuffer?
-
     /// Buffer loaded ahead of time for the upcoming track.
-    private var preloadedBuffer:      AVAudioPCMBuffer?
-    private var preloadedBufferIndex: Int               = -1
+    @ObservationIgnored private var preloadedBuffer:      AVAudioPCMBuffer?
+    @ObservationIgnored private var preloadedBufferIndex: Int               = -1
 
     /// Background task that loads the next track's buffer.
-    private var prefetchTask:         Task<Void, Never>?
+    @ObservationIgnored private var prefetchTask: Task<Void, Never>?
 
     /// Index of the track whose buffer has already been appended to the player node
-    /// queue (via `audioEngine.chainMain`). Non-nil means the transition will be gapless.
-    private var chainedNextIndex:     Int?
+    /// queue (via `audioEngine.chain(...)`). Non-nil means the transition will be gapless.
+    @ObservationIgnored private var chainedNextIndex: Int?
 
     /// The buffer that was chained for the next track; becomes `currentFullBuffer`
     /// when `transitionToChained` runs.
-    private var chainedBuffer:        AVAudioPCMBuffer?
+    @ObservationIgnored private var chainedBuffer: AVAudioPCMBuffer?
 
     // MARK: - Init
 
-    /// Set by AppState when a library folder is opened.
-    var libraryFolderURL: URL?
-
     init(audioEngine: AudioEngineManager) {
-        self.audioEngine = audioEngine
+        super.init(audioEngine: audioEngine, outputChannel: .left)
         startTrackObservation()
     }
 
@@ -94,7 +78,6 @@ final class MainPlaybackController {
         }
         bufferedTrackObservation?.cancel()
         prefetchTask?.cancel()
-        positionTimer?.invalidate()
         gapTimer?.invalidate()
     }
 
@@ -114,56 +97,35 @@ final class MainPlaybackController {
         playlist = tracks
     }
 
-    // MARK: - Transport Controls
+    // MARK: - Transport
 
     func play(from index: Int = 0) {
         guard !playlist.isEmpty else { return }
         playTrack(at: index.clamped(to: 0...(playlist.count - 1)))
     }
 
-    func togglePlayPause() {
-        if isPlaying { pause() } else { resume() }
-    }
-
-    func pause() {
-        guard isPlaying else { return }
-        audioEngine.pauseMain()
-        isPlaying = false
-        stopPositionTimer()
-    }
-
-    func resume() {
-        guard !isPlaying else { return }
-        guard currentTrack != nil else {
-            if !playlist.isEmpty { play() }
+    override func resume() {
+        // Preserve the old behavior: if no track is loaded but the playlist has
+        // tracks, start from the top instead of being a no-op.
+        if currentTrack == nil, !isPlaying, !playlist.isEmpty {
+            play()
             return
         }
-        audioEngine.resumeMain()
-        isPlaying = true
-        startPositionTimer()
+        super.resume()
     }
 
-    func stop() {
+    /// Full reset — matches the pre-refactor behavior of `MainPlaybackController.stop`.
+    override func stop() {
         cancelGap()
         cancelPrefetch()
         cancelChain()
-        seekTask?.cancel()
-        seekTask = nil
-        playbackGeneration += 1
-        audioEngine.stopMain()
-        currentFullBuffer  = nil
-        isPlaying          = false
-        currentTrack       = nil
-        currentTrackIndex  = 0
-        currentTime        = 0
-        duration           = 0
-        seekFrameOffset    = 0
-        stopPositionTimer()
+        reset()
+        currentTrackIndex = 0
     }
 
     func nextTrack() {
         cancelGap()
-        guard currentTrack != nil else {
+        if currentTrack == nil {
             if !playlist.isEmpty { play() }
             return
         }
@@ -173,286 +135,54 @@ final class MainPlaybackController {
     }
 
     func previousTrack() {
-        guard currentTrack != nil else {
+        if currentTrack == nil {
             if !playlist.isEmpty { play() }
-            return
-        }
-        if currentTime > 3.0 {
-            seek(to: 0)
             return
         }
         playTrack(at: max(currentTrackIndex - 1, 0))
     }
 
-    func seek(to time: TimeInterval) {
-        guard let track = currentTrack else { return }
+    // MARK: - Playlist-aware playTrack
 
-        cancelPrefetch()
-        cancelChain()
-        seekTask?.cancel()
-        seekTask = nil
-
-        let clamped     = time.clamped(to: 0...duration)
-        let sampleRate  = audioEngine.mainSampleRate()
-        
-        // Calculate the absolute frame position in the full buffer
-        let cueInFrame = effectiveStartFrame(for: track, sampleRate: sampleRate)
-        let cueOutFrame = effectiveEndFrame(for: track, sampleRate: sampleRate)
-        
-        // Position is relative to cue-in
-        let absoluteFrame = cueInFrame + AVAudioFramePosition(clamped * sampleRate)
-
-        seekFrameOffset    = absoluteFrame
-        playbackGeneration += 1
-        let gen            = playbackGeneration
-
-        currentTime = clamped
-        isPlaying   = false
-        stopPositionTimer()
-
-        if let fullBuf = currentFullBuffer {
-            // Fast path: slice the full buffer from the seek position to cue-out
-            let slice: AVAudioPCMBuffer?
-            if let cueOut = cueOutFrame {
-                let remainingToCueOut = cueOut - absoluteFrame
-                if remainingToCueOut > 0 {
-                    slice = fullBuf.sliced(fromFrame: absoluteFrame, length: AVAudioFrameCount(remainingToCueOut))
-                } else {
-                    slice = nil  // Already past cue-out
-                }
-            } else {
-                slice = fullBuf.sliced(fromFrame: absoluteFrame)
-            }
-            
-            if let slice = slice {
-                do {
-                    try audioEngine.scheduleSeekMain(slice) { [weak self] in
-                        self?.handleTrackCompletion(generation: gen)
-                    }
-                    isPlaying = true
-                    startPositionTimer()
-                    prefetchAndChain(nextIndex: currentTrackIndex + 1, generation: gen)
-                } catch {
-                    print("MainPlaybackController: seek error — \(error.localizedDescription)")
-                }
-            }
-            return
-        }
-
-        // Slow path: full buffer not available yet (shouldn't happen during normal playback,
-        // but guards against seeking before the initial load completes).
-        let url           = track.accessibleURL(libraryFolderURL: libraryFolderURL)
-        let outputChannel = audioEngine.mainOutputChannel
-        guard let format  = audioEngine.playerFormat else { return }
-        
-        audioEngine.stopMain()
-
-        seekTask = Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
-            do {
-                // Load full buffer then slice it
-                let fullBuffer = try AudioEngineManager.loadBuffer(
-                    url: url,
-                    outputChannel: outputChannel,
-                    playerFormat: format
-                )
-                
-                guard !Task.isCancelled else { return }
-                await MainActor.run { [weak self] in
-                    guard let self, !Task.isCancelled,
-                          self.playbackGeneration == gen else { return }
-                    
-                    // Slice from seek position to cue-out
-                    let slice: AVAudioPCMBuffer?
-                    if let cueOut = cueOutFrame {
-                        let remainingToCueOut = cueOut - absoluteFrame
-                        if remainingToCueOut > 0 {
-                            slice = fullBuffer.sliced(fromFrame: absoluteFrame, length: AVAudioFrameCount(remainingToCueOut))
-                        } else {
-                            slice = nil
-                        }
-                    } else {
-                        slice = fullBuffer.sliced(fromFrame: absoluteFrame)
-                    }
-                    
-                    if let slice = slice {
-                        do {
-                            try self.audioEngine.scheduleSeekMain(slice) { [weak self] in
-                                self?.handleTrackCompletion(generation: gen)
-                            }
-                            self.currentFullBuffer = fullBuffer
-                            self.isPlaying = true
-                            self.startPositionTimer()
-                            self.prefetchAndChain(nextIndex: self.currentTrackIndex + 1, generation: gen)
-                        } catch {
-                            print("MainPlaybackController: seek error — \(error.localizedDescription)")
-                        }
-                    }
-                }
-            } catch { }
-        }
-    }
-
-    // MARK: - Private Playback
-    
-    /// Returns the effective duration of a track respecting cue points.
-    private func effectiveDuration(for track: Track) -> TimeInterval {
-        let cueIn = track.cuePointIn ?? 0
-        let cueOut = track.cuePointOut ?? track.duration
-        return max(0, cueOut - cueIn)
-    }
-    
-    /// Returns the effective start frame accounting for cue-in.
-    private func effectiveStartFrame(for track: Track, sampleRate: Double) -> AVAudioFramePosition {
-        return track.cuePointIn.map { AVAudioFramePosition($0 * sampleRate) } ?? 0
-    }
-    
-    /// Returns the effective end frame accounting for cue-out.
-    private func effectiveEndFrame(for track: Track, sampleRate: Double) -> AVAudioFramePosition? {
-        return track.cuePointOut.map { AVAudioFramePosition($0 * sampleRate) }
-    }
-    
-    /// Slices a full buffer to respect cue points, returning the portion to play.
-    private func sliceBufferForCuePoints(_ buffer: AVAudioPCMBuffer, track: Track, sampleRate: Double) -> AVAudioPCMBuffer? {
-        let cueInFrame = effectiveStartFrame(for: track, sampleRate: sampleRate)
-        let cueOutFrame = effectiveEndFrame(for: track, sampleRate: sampleRate)
-        
-        // If no cue points, return the original buffer
-        guard cueInFrame > 0 || cueOutFrame != nil else {
-            return buffer
-        }
-        
-        // Calculate the length to extract
-        let endFrame = cueOutFrame ?? AVAudioFramePosition(buffer.frameLength)
-        let length = AVAudioFrameCount(endFrame - cueInFrame)
-        
-        // Slice the buffer
-        return buffer.sliced(fromFrame: cueInFrame, length: length)
-    }
-
+    /// Starts playback of the track at `index`, using any prefetched buffer if available.
     private func playTrack(at index: Int) {
         guard index >= 0 && index < playlist.count else { return }
 
         recordPlayIfNeeded()
-        seekTask?.cancel()
-        seekTask = nil
 
         // Claim the preloaded buffer before cancelPrefetch() wipes it.
         let cachedBuffer: AVAudioPCMBuffer? = (preloadedBufferIndex == index) ? preloadedBuffer : nil
+
+        currentTrackIndex        = index
+        currentTrackPlayRecorded = false
+
+        playTrack(playlist[index], cachedBuffer: cachedBuffer)
+    }
+
+    // MARK: - Overridden Hooks
+
+    override func willStartTrack(_ track: Track, generation: Int) {
         cancelPrefetch()
         cancelChain()
+    }
 
-        let track = playlist[index]
-        playbackGeneration += 1
-        let gen           = playbackGeneration
-        seekFrameOffset   = 0
-        currentTrackIndex = index
-        currentTrack      = track
-        currentTrackPlayRecorded = false
-        duration          = effectiveDuration(for: track)
-        currentTime       = 0
+    override func didStartTrack(_ track: Track, generation: Int) {
+        prefetchAndChain(nextIndex: currentTrackIndex + 1, generation: generation)
+    }
 
-        do {
-            let fullBuffer: AVAudioPCMBuffer
-            if let cached = cachedBuffer {
-                fullBuffer = cached
-            } else {
-                fullBuffer = try audioEngine.loadBufferForMain(
-                    url: track.accessibleURL(libraryFolderURL: libraryFolderURL)
-                )
-            }
-            
-            // Slice the buffer to respect cue points
-            let sampleRate = audioEngine.mainSampleRate()
-            guard let playBuffer = sliceBufferForCuePoints(fullBuffer, track: track, sampleRate: sampleRate) else {
-                throw AudioEngineManager.BufferError.allocationFailed
-            }
+    /// Called when the current buffer — or a chained buffer — has finished playing.
+    override func onTrackCompletion(generation: Int) {
+        guard playbackGeneration == generation else { return }
 
-            try audioEngine.playMain(playBuffer) { [weak self] in
-                self?.handleTrackCompletion(generation: gen)
-            }
-            currentFullBuffer = fullBuffer  // Keep full buffer for seeking/waveform
-            isPlaying = true
-            startPositionTimer()
-            prefetchAndChain(nextIndex: index + 1, generation: gen)
-        } catch {
-            print("MainPlaybackController: playback error — \(error.localizedDescription)")
-            isPlaying = false
+        if let chainedIdx = chainedNextIndex {
+            // The next track is already playing seamlessly; just update state.
+            transitionToChained(index: chainedIdx, generation: generation)
+        } else {
+            autoAdvance()
         }
     }
 
-    /// Loads the next track in the background and, once ready, appends its buffer
-    /// directly to the player-node queue for a gapless transition.
-    ///
-    /// The buffer is also stored as `preloadedBuffer` so that `playTrack(at:)` can use
-    /// it as a cache even if chaining isn't possible (e.g. a gap is configured or the
-    /// user skips tracks).
-    private func prefetchAndChain(nextIndex: Int, generation: Int) {
-        guard nextIndex < playlist.count else { return }
-
-        // Capture URL, format, channel, and track info on the main actor before entering the background task.
-        let nextTrack = playlist[nextIndex]
-        let url       = nextTrack.accessibleURL(libraryFolderURL: libraryFolderURL)
-        let format    = audioEngine.playerFormat!
-        let channel   = audioEngine.mainOutputChannel
-
-        prefetchTask = Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
-            do {
-                // Load the FULL buffer
-                let fullBuffer = try AudioEngineManager.loadBuffer(
-                    url: url, 
-                    outputChannel: channel, 
-                    playerFormat: format
-                )
-
-                await MainActor.run {
-                    // Discard if the user has already moved on.
-                    guard self.playbackGeneration == generation,
-                          !Task.isCancelled else { return }
-                    
-                    // Slice for cue points
-                    let sampleRate = self.audioEngine.mainSampleRate()
-                    guard let playBuffer = self.sliceBufferForCuePoints(fullBuffer, track: nextTrack, sampleRate: sampleRate) else {
-                        return
-                    }
-
-                    // Always cache the FULL buffer so playTrack can use it on demand.
-                    self.preloadedBuffer      = fullBuffer
-                    self.preloadedBufferIndex = nextIndex
-
-                    // Chain only when no gap is configured, the player is running,
-                    // and we haven't already chained something.
-                    guard self.gapDuration <= 0,
-                          self.isPlaying,
-                          self.chainedNextIndex == nil else { return }
-
-                    self.audioEngine.chainMain(playBuffer) { [weak self] in
-                        self?.handleTrackCompletion(generation: generation)
-                    }
-                    self.chainedBuffer    = fullBuffer  // Store full buffer for seeking
-                    self.chainedNextIndex = nextIndex
-                }
-            } catch {
-                // Prefetch failed; playTrack will load on demand when needed.
-            }
-        }
-    }
-
-    /// Called (on the main thread) when the current buffer — or a chained buffer — has
-    /// finished playing back.
-    private func handleTrackCompletion(generation: Int) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.playbackGeneration == generation else { return }
-
-            if let chainedIdx = self.chainedNextIndex {
-                // The next track is already playing seamlessly; just update state.
-                self.transitionToChained(index: chainedIdx, generation: generation)
-            } else {
-                self.autoAdvance()
-            }
-        }
-    }
+    // MARK: - Chained Transition
 
     /// Transitions controller state to a track that is already playing (chained).
     /// Preserves the current `playbackGeneration` so the chained track's completion
@@ -466,19 +196,19 @@ final class MainPlaybackController {
         preloadedBuffer      = nil
         preloadedBufferIndex = -1
 
-        let track             = playlist[index]
-        currentTrackIndex     = index
-        currentTrack          = track
-        duration              = effectiveDuration(for: track)
-        currentTime           = 0
+        let track                = playlist[index]
+        currentTrackIndex        = index
+        currentTrack             = track
+        duration                 = effectiveDuration(for: track)
+        currentTime              = 0
         currentTrackPlayRecorded = false
 
         // The player node's sample counter accumulates across chained buffers — it is
         // never reset by a stop/play cycle because chaining doesn't stop the node.
         // Store the node's current position as a negative offset so updatePosition()
         // computes time relative to THIS track's start rather than the session start.
-        let sampleRate = audioEngine.mainSampleRate()
-        if let pos = audioEngine.mainPlaybackPosition() {
+        let sampleRate = sampleRate()
+        if let pos = playbackPosition() {
             seekFrameOffset = -AVAudioFramePosition(pos * sampleRate)
         } else {
             seekFrameOffset = 0
@@ -489,6 +219,8 @@ final class MainPlaybackController {
 
         prefetchAndChain(nextIndex: index + 1, generation: generation)
     }
+
+    // MARK: - Auto-Advance
 
     /// Auto-advances after a track ends naturally (no chained successor).
     private func autoAdvance() {
@@ -523,7 +255,7 @@ final class MainPlaybackController {
 
     private func startGap(nextIndex: Int) {
         recordPlayIfNeeded()
-        audioEngine.stopMain()
+        stopPlayer()
         isPlaying = false
         stopPositionTimer()
 
@@ -561,7 +293,65 @@ final class MainPlaybackController {
         track.lastPlayedDate  = Date()
     }
 
-    // MARK: - Prefetch / Chain Cancellation
+    // MARK: - Prefetch & Chain
+
+    /// Loads the next track in the background and, once ready, appends its buffer
+    /// directly to the player-node queue for a gapless transition.
+    ///
+    /// The buffer is also stored as `preloadedBuffer` so that `playTrack(at:)` can use
+    /// it as a cache even if chaining isn't possible (e.g. a gap is configured or the
+    /// user skips tracks).
+    private func prefetchAndChain(nextIndex: Int, generation: Int) {
+        guard nextIndex < playlist.count else { return }
+
+        // Capture URL, format, channel, and track info on the main actor before entering the background task.
+        let nextTrack = playlist[nextIndex]
+        let url       = nextTrack.accessibleURL(libraryFolderURL: libraryFolderURL)
+        let format    = audioEngine.playerFormat!
+        let channel   = outputChannel
+
+        prefetchTask = Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            do {
+                // Load the FULL buffer
+                let fullBuffer = try AudioEngineManager.loadBuffer(
+                    url: url,
+                    outputChannel: channel,
+                    playerFormat: format
+                )
+
+                await MainActor.run {
+                    // Discard if the user has already moved on.
+                    guard self.playbackGeneration == generation,
+                          !Task.isCancelled else { return }
+
+                    // Slice for cue points
+                    let sampleRate = self.sampleRate()
+                    guard let playBuffer = self.sliceForCuePoints(fullBuffer, track: nextTrack, sampleRate: sampleRate) else {
+                        return
+                    }
+
+                    // Always cache the FULL buffer so playTrack can use it on demand.
+                    self.preloadedBuffer      = fullBuffer
+                    self.preloadedBufferIndex = nextIndex
+
+                    // Chain only when no gap is configured, the player is running,
+                    // and we haven't already chained something.
+                    guard self.gapDuration <= 0,
+                          self.isPlaying,
+                          self.chainedNextIndex == nil else { return }
+
+                    self.chain(playBuffer) { [weak self] in
+                        self?.handleTrackCompletion(generation: generation)
+                    }
+                    self.chainedBuffer    = fullBuffer  // Store full buffer for seeking
+                    self.chainedNextIndex = nextIndex
+                }
+            } catch {
+                // Prefetch failed; playTrack will load on demand when needed.
+            }
+        }
+    }
 
     private func cancelPrefetch() {
         prefetchTask?.cancel()
@@ -576,11 +366,11 @@ final class MainPlaybackController {
         // If the player is stopped (e.g. stop()/seek()) the buffer queue is cleared
         // automatically by AVAudioPlayerNode.stop().
     }
-    
+
     // MARK: - Playlist Model Observation
 
-    private var activePlaylistModel: Playlist?
-    private var playlistChangeObserver: NSObjectProtocol?
+    @ObservationIgnored private var activePlaylistModel: Playlist?
+    @ObservationIgnored private var playlistChangeObserver: NSObjectProtocol?
 
     private func startPlaylistChangeObserver() {
         if let obs = playlistChangeObserver {
@@ -626,14 +416,14 @@ final class MainPlaybackController {
     // MARK: - Track & Playlist Change Observation
 
     /// Observation tracking for the buffered next track
-    private var bufferedTrackObservation: Task<Void, Never>?
-    
+    @ObservationIgnored private var bufferedTrackObservation: Task<Void, Never>?
+
     /// Cached state to detect actual changes (not just re-observation)
-    private var lastObservedBufferedTrackID: UUID?
-    private var lastObservedCuePoints: (cueIn: TimeInterval?, cueOut: TimeInterval?)?
-    private var lastObservedCurrentTrackID: UUID?
-    private var lastObservedBufferedIndex: Int?
-    
+    @ObservationIgnored private var lastObservedBufferedTrackID: UUID?
+    @ObservationIgnored private var lastObservedCuePoints: (cueIn: TimeInterval?, cueOut: TimeInterval?)?
+    @ObservationIgnored private var lastObservedCurrentTrackID: UUID?
+    @ObservationIgnored private var lastObservedBufferedIndex: Int?
+
     /// Starts observing changes to the prefetched next track using Swift Observation
     private func startTrackObservation() {
         // Start a background task that sets up observation tracking
@@ -643,7 +433,7 @@ final class MainPlaybackController {
             }
         }
     }
-    
+
     /// Observes the buffered track using withObservationTracking
     @MainActor
     private func observeBufferedTrack() async {
@@ -652,12 +442,12 @@ final class MainPlaybackController {
             withObservationTracking {
                 // Access the properties we want to observe
                 // This registers them with the observation system
-                
+
                 // Observe current track (to detect when its position changes)
                 if let current = currentTrack {
                     _ = current.id
                 }
-                
+
                 // Observe buffered track's cue points
                 if let bufferedIndex = chainedNextIndex ?? (preloadedBufferIndex >= 0 ? preloadedBufferIndex : nil),
                    bufferedIndex < playlist.count {
@@ -667,7 +457,7 @@ final class MainPlaybackController {
                     _ = track.cuePointOut
                     _ = track.id
                 }
-                
+
                 // Observe the playlist array - access individual track IDs to detect reordering
                 _ = playlist.count
                 for track in playlist {
@@ -682,22 +472,22 @@ final class MainPlaybackController {
             }
         }
     }
-    
+
     /// Called when the buffered track or playlist changes
     @MainActor
     private func handleBufferedTrackChanged() {
         // No buffered track to monitor
-        guard preloadedBufferIndex >= 0 || chainedNextIndex != nil else { 
+        guard preloadedBufferIndex >= 0 || chainedNextIndex != nil else {
             // Clear cached state
             lastObservedBufferedTrackID = nil
             lastObservedCuePoints = nil
             lastObservedCurrentTrackID = nil
             lastObservedBufferedIndex = nil
-            return 
+            return
         }
-        
+
         let bufferedIndex = chainedNextIndex ?? preloadedBufferIndex
-        
+
         // Check if buffered track is out of range
         guard bufferedIndex >= 0 && bufferedIndex < playlist.count else {
             print("[MainPlaybackController] Buffered track out of range, canceling")
@@ -712,10 +502,10 @@ final class MainPlaybackController {
             lastObservedBufferedIndex = nil
             return
         }
-        
+
         let bufferedTrack = playlist[bufferedIndex]
         let currentCuePoints = (cueIn: bufferedTrack.cuePointIn, cueOut: bufferedTrack.cuePointOut)
-        
+
         // First time observing - just cache the state without invalidating
         guard let lastBufferedID = lastObservedBufferedTrackID,
               let lastCurrentID = lastObservedCurrentTrackID else {
@@ -725,11 +515,11 @@ final class MainPlaybackController {
             lastObservedBufferedIndex = bufferedIndex
             return
         }
-        
+
         // Check what actually changed
         let currentTrackChanged = lastCurrentID != currentTrack?.id
         let bufferedTrackChanged = lastBufferedID != bufferedTrack.id
-        
+
         // If ONLY the current track changed (normal playback transition), update cache without invalidating
         // The buffered track should remain the same during normal transitions
         if currentTrackChanged && !bufferedTrackChanged {
@@ -738,17 +528,17 @@ final class MainPlaybackController {
             lastObservedCurrentTrackID = currentTrack?.id
             return
         }
-        
+
         // Now check for actual issues that require invalidation
         var needsInvalidation = false
         var changeReason = ""
-        
+
         // Determine what the buffered index SHOULD be based on the current track's position in playlist
         if let currentTrackID = currentTrack?.id,
            let actualCurrentIndex = playlist.firstIndex(where: { $0.id == currentTrackID }) {
-            
+
             let expectedBufferedIndex = actualCurrentIndex + 1
-            
+
             // The buffered index doesn't match what we expect
             if bufferedIndex != expectedBufferedIndex {
                 // This means the playlist was reordered or the current track moved
@@ -767,23 +557,23 @@ final class MainPlaybackController {
                 changeReason = "cue points changed on buffered track"
             }
         }
-        
+
         // Update cached state
         lastObservedBufferedTrackID = bufferedTrack.id
         lastObservedCuePoints = currentCuePoints
         lastObservedCurrentTrackID = currentTrack?.id
         lastObservedBufferedIndex = bufferedIndex
-        
+
         // Only invalidate if something actually changed that affects playback
         if needsInvalidation {
             print("[MainPlaybackController] Buffered track invalidated: \(changeReason)")
-            
+
             if chainedNextIndex != nil {
                 cancelChain()
             } else {
                 cancelPrefetch()
             }
-            
+
             // Restart prefetch with the correct next track
             if isPlaying, let currentIndex = playlist.firstIndex(where: { $0.id == currentTrack?.id }) {
                 let nextIndex = currentIndex + 1
@@ -793,34 +583,4 @@ final class MainPlaybackController {
             }
         }
     }
-
-    // MARK: - Position Timer
-
-    private func startPositionTimer() {
-        stopPositionTimer()
-        positionTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-            self?.updatePosition()
-        }
-    }
-
-    private func stopPositionTimer() {
-        positionTimer?.invalidate()
-        positionTimer = nil
-    }
-
-    private func updatePosition() {
-        guard isPlaying else { return }
-
-        if let position = audioEngine.mainPlaybackPosition() {
-            let offsetSeconds = Double(seekFrameOffset) / audioEngine.mainSampleRate()
-            let computed      = position + offsetSeconds
-            currentTime       = max(0, min(computed, duration))
-            
-            // No need to check cueOut here anymore since the buffer is already sliced
-        } else if !audioEngine.isMainPlaying {
-            // Engine stopped unexpectedly (e.g. audio device removed). Reflect that.
-            isPlaying = false
-        }
-    }
 }
-

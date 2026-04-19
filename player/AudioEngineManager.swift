@@ -1,32 +1,40 @@
 @preconcurrency import AVFoundation
 import Observation
 
-/// Manages the AVAudioEngine graph for a mono-split headphone preview system.
+/// Shared AVAudioEngine host for the app's playback controllers.
 ///
-/// Two player nodes feed through individual mixer nodes that are panned hard-left
-/// (main) and hard-right (preview). Both signals are mixed to mono before panning,
-/// so a DJ using a stereo splitter cable hears the main output in one ear and the
-/// cue/preview output in the other.
+/// Each `PlaybackController` owns its own `AVAudioPlayerNode` + `AVAudioMixerNode`
+/// (player→mixer→mainMixer) and performs all transport directly on those nodes.
+/// This manager holds only the resources that must be shared across controllers:
+/// the engine instance, the buffer format, the serial dispatch queue used for
+/// all player-node operations, and the hardware configuration-change observer.
 ///
-/// All main-output playback is buffer-based (files pre-loaded into `AVAudioPCMBuffer`)
-/// to eliminate disk I/O on the audio render thread and enable seamless gapless
+/// Controllers register themselves at init time; `handleEngineConfigurationChange`
+/// fans out to each registered controller so they can reset their playing flag and
+/// re-establish their graph connections with the new format.
+///
+/// All playback is buffer-based (files pre-loaded into `AVAudioPCMBuffer`) to
+/// eliminate disk I/O on the audio render thread and enable seamless gapless
 /// chaining between tracks.
 @Observable
 final class AudioEngineManager {
 
-    // MARK: - Engine & Nodes
+    // MARK: - Types
 
-    private let engine = AVAudioEngine()
-    private let mainPlayer = AVAudioPlayerNode()
-    private let previewPlayer = AVAudioPlayerNode()
-    private let mainMixer = AVAudioMixerNode()
-    private let previewMixer = AVAudioMixerNode()
+    /// Which output channel(s) a buffer should carry signal in.
+    /// `.left` and `.right` zero the opposite channel for mono-split routing.
+    /// `.both` places the signal in both channels (stereo headphone monitoring).
+    enum OutputChannel { case left, right, both }
 
-    /// Pending seek work items — cancelled when a newer seek arrives so stale
-    /// seeks are skipped rather than executing in order on playerQueue.
-    /// Must only be accessed from the main thread.
-    private var pendingSeekMain:    DispatchWorkItem?
-    private var pendingSeekPreview: DispatchWorkItem?
+    enum BufferError: Error {
+        case allocationFailed
+        case conversionFailed
+        case invalidRange
+    }
+
+    // MARK: - Engine
+
+    @ObservationIgnored let engine = AVAudioEngine()
 
     /// Serial queue for all AVAudioPlayerNode operations.
     ///
@@ -35,47 +43,32 @@ final class AudioEngineManager {
     /// the main actor (User-Interactive QoS) causes priority inversion warnings.
     /// Dispatching to this queue keeps the caller non-blocking and ensures the
     /// operations execute at a priority that matches AVFoundation's own threads.
-    private let playerQueue = DispatchQueue(label: "com.player.audioengine", qos: .default)
-
-    // MARK: - Observable State
-
-    private(set) var isMainPlaying: Bool = false
-    private(set) var isPreviewPlaying: Bool = false
+    @ObservationIgnored let playerQueue = DispatchQueue(label: "com.player.audioengine", qos: .default)
 
     // MARK: - Buffer Format
 
-    /// The PCM format used for all main-player buffer scheduling.
+    /// The PCM format used for all player-node buffer scheduling.
     /// Derived from the engine's hardware output; all loaded buffers are converted to this.
     private(set) var playerFormat: AVAudioFormat!
 
-    // MARK: - Volume
-
-    var mainVolume: Float {
-        get { mainMixer.outputVolume }
-        set { mainMixer.outputVolume = newValue.clamped(to: 0...1) }
+    /// Fallback sample rate for time calculations when the player node hasn't
+    /// rendered yet (so `player.lastRenderTime` is nil).
+    var fallbackSampleRate: Double {
+        engine.mainMixerNode.outputFormat(forBus: 0).sampleRate
     }
 
-    var previewVolume: Float {
-        get { previewMixer.outputVolume }
-        set { previewMixer.outputVolume = newValue.clamped(to: 0...1) }
-    }
+    // MARK: - Registry
 
-    /// Controls which channel(s) main audio is routed to.
-    /// `.left` = mono-split cable mode (preview in left ear only).
-    /// `.both`  = stereo monitoring mode (preview in both ears).
-    var mainOutputChannel: OutputChannel = .left
+    /// Weak references to attached controllers, so config changes can fan out.
+    @ObservationIgnored private var controllers: [WeakBox<PlaybackController>] = []
 
-    /// Controls which channel(s) preview audio is routed to.
-    /// `.right` = mono-split cable mode (preview in right ear only).
-    /// `.both`  = stereo monitoring mode (preview in both ears).
-    var previewOutputChannel: OutputChannel = .right
+    @ObservationIgnored private var configChangeObserver: (any NSObjectProtocol)?
 
     // MARK: - Init / Teardown
 
-    private var configChangeObserver: (any NSObjectProtocol)?
-
     init() {
-        setupEngine()
+        refreshPlayerFormat()
+        observeConfigurationChanges()
     }
 
     deinit {
@@ -87,35 +80,17 @@ final class AudioEngineManager {
 
     // MARK: - Engine Setup
 
-    private func setupEngine() {
-        engine.attach(mainPlayer)
-        engine.attach(previewPlayer)
-        engine.attach(mainMixer)
-        engine.attach(previewMixer)
-        connectNodes()
-        observeConfigurationChanges()
-    }
-
-    private func connectNodes() {
+    private func refreshPlayerFormat() {
         let outputFormat = engine.mainMixerNode.outputFormat(forBus: 0)
 
         // Always use explicit 2-channel stereo regardless of what the engine reports.
         // Channel isolation is enforced by the buffer content (L=signal/R=0 for main,
         // L=0/R=signal for preview) rather than by AVAudioMixerNode.pan, which is
         // unreliable across hardware configurations and macOS versions.
-        guard let stereoFormat = AVAudioFormat(
+        playerFormat = AVAudioFormat(
             standardFormatWithSampleRate: max(outputFormat.sampleRate, 44_100),
             channels: 2
-        ) else { return }
-
-        playerFormat = stereoFormat
-
-        // All connections are stereo. The mixers are kept for per-player volume control.
-        // No pan is applied — channel routing is entirely determined by the buffers.
-        engine.connect(mainPlayer,    to: mainMixer,            format: stereoFormat)
-        engine.connect(previewPlayer, to: previewMixer,         format: stereoFormat)
-        engine.connect(mainMixer,     to: engine.mainMixerNode, format: stereoFormat)
-        engine.connect(previewMixer,  to: engine.mainMixerNode, format: stereoFormat)
+        )
     }
 
     private func observeConfigurationChanges() {
@@ -129,14 +104,16 @@ final class AudioEngineManager {
     }
 
     /// Handles audio hardware changes (e.g. headphones plugged/unplugged).
-    /// Reconnects nodes with the new hardware format and restarts the engine.
+    /// Reconnects each controller's nodes with the new hardware format and restarts the engine.
     private func handleEngineConfigurationChange() {
-        // Players lose their scheduled data when the engine stops; mark them stopped.
-        isMainPlaying   = false
-        isPreviewPlaying = false
-
         if engine.isRunning { engine.stop() }
-        connectNodes()          // re-derive format + reconnect
+        refreshPlayerFormat()
+
+        // Players lose their scheduled data when the engine stops; have each
+        // controller mark itself stopped and reconnect its graph with the new format.
+        for box in controllers {
+            box.value?.handleEngineConfigurationChange()
+        }
 
         do {
             try engine.start()
@@ -153,57 +130,36 @@ final class AudioEngineManager {
     }
 
     func stop() {
-        mainPlayer.stop()
-        previewPlayer.stop()
         engine.stop()
-        isMainPlaying   = false
-        isPreviewPlaying = false
+    }
+
+    /// Starts the engine if it isn't already running. Safe to call from transport methods.
+    func ensureRunning() throws {
+        if !engine.isRunning { try engine.start() }
+    }
+
+    // MARK: - Controller Registry
+
+    /// Attaches `player` + `mixer` to the engine graph, connects them through to the
+    /// main mixer, and records the controller for configuration-change fan-out.
+    /// Called once per `PlaybackController` during its init.
+    func attach(_ controller: PlaybackController,
+                player: AVAudioPlayerNode,
+                mixer: AVAudioMixerNode) {
+        engine.attach(player)
+        engine.attach(mixer)
+        connect(player: player, mixer: mixer)
+        controllers.append(WeakBox(controller))
+    }
+
+    /// Re-establishes the player→mixer→mainMixer connections using the current
+    /// `playerFormat`. Called by controllers during configuration-change recovery.
+    func connect(player: AVAudioPlayerNode, mixer: AVAudioMixerNode) {
+        engine.connect(player, to: mixer,             format: playerFormat)
+        engine.connect(mixer,  to: engine.mainMixerNode, format: playerFormat)
     }
 
     // MARK: - Buffer Loading
-
-    enum BufferError: Error {
-        case allocationFailed
-        case conversionFailed
-        case invalidRange
-    }
-
-    /// Which output channel(s) a buffer should carry signal in.
-    /// `.left` and `.right` zero the opposite channel for mono-split routing.
-    /// `.both` places the signal in both channels (stereo headphone monitoring).
-    enum OutputChannel { case left, right, both }
-
-    // MARK: Instance convenience (main-actor, for synchronous call sites)
-
-    /// Loads a whole file as a stereo buffer with audio in the left channel (main output).
-    func loadBufferForMain(url: URL) throws -> AVAudioPCMBuffer {
-        try loadBufferForMain(url: url, fromFrame: 0)
-    }
-
-    /// Loads from `startFrame` to end, audio in the left channel (main seek).
-    func loadBufferForMain(url: URL, fromFrame startFrame: AVAudioFramePosition) throws -> AVAudioPCMBuffer {
-        try Self.loadBuffer(url: url, fromFrame: startFrame, outputChannel: mainOutputChannel, playerFormat: playerFormat)
-    }
-    
-    /// Loads a buffer respecting cue in/out points (in seconds).
-    func loadBufferForMain(url: URL, cueIn: TimeInterval?, cueOut: TimeInterval?) throws -> AVAudioPCMBuffer {
-        let file = try AVAudioFile(forReading: url)
-        let sampleRate = file.processingFormat.sampleRate
-        
-        let startFrame = cueIn.map { AVAudioFramePosition($0 * sampleRate) } ?? 0
-        let endFrame = cueOut.map { AVAudioFramePosition($0 * sampleRate) }
-        
-        return try Self.loadBuffer(url: url, fromFrame: startFrame, toFrame: endFrame,
-                                  outputChannel: mainOutputChannel, playerFormat: playerFormat)
-    }
-
-    /// Loads a whole file as a stereo buffer for preview output.
-    /// Channel routing is determined by `previewOutputChannel`.
-    func loadBufferForPreview(url: URL) throws -> AVAudioPCMBuffer {
-        try Self.loadBuffer(url: url, outputChannel: previewOutputChannel, playerFormat: playerFormat)
-    }
-
-    // MARK: Static background-safe loaders (no actor state — pass playerFormat from main actor)
 
     /// Background-safe full-file loader. Capture `audioEngine.playerFormat` before entering a Task.
     nonisolated static func loadBuffer(url: URL, outputChannel: OutputChannel,
@@ -211,35 +167,21 @@ final class AudioEngineManager {
         return try loadBuffer(url: url, fromFrame: 0, outputChannel: outputChannel, playerFormat: playerFormat)
     }
 
-    /// Background-safe seek loader.
-    nonisolated static func loadBuffer(url: URL, fromFrame startFrame: AVAudioFramePosition,
-                                       outputChannel: OutputChannel,
-                                       playerFormat: AVAudioFormat) throws -> AVAudioPCMBuffer {
-        return try loadBuffer(url: url, fromFrame: startFrame, toFrame: nil, 
-                            outputChannel: outputChannel, playerFormat: playerFormat)
-    }
-    
     /// Background-safe loader with optional start and end frames for cue point support.
-    /// - Parameters:
-    ///   - url: The audio file URL
-    ///   - startFrame: Starting frame position (defaults to 0)
-    ///   - toFrame: Optional ending frame position (nil = end of file)
-    ///   - outputChannel: Which channel(s) to output to
-    ///   - playerFormat: The target playback format
-    nonisolated static func loadBuffer(url: URL, 
+    nonisolated static func loadBuffer(url: URL,
                                        fromFrame startFrame: AVAudioFramePosition = 0,
                                        toFrame endFrame: AVAudioFramePosition? = nil,
                                        outputChannel: OutputChannel,
                                        playerFormat: AVAudioFormat) throws -> AVAudioPCMBuffer {
         let file = try AVAudioFile(forReading: url)
         guard startFrame >= 0 && startFrame < file.length else { throw BufferError.invalidRange }
-        
+
         file.framePosition = startFrame
         let actualEndFrame = endFrame ?? file.length
-        guard actualEndFrame > startFrame && actualEndFrame <= file.length else { 
-            throw BufferError.invalidRange 
+        guard actualEndFrame > startFrame && actualEndFrame <= file.length else {
+            throw BufferError.invalidRange
         }
-        
+
         let frameCount = AVAudioFrameCount(actualEndFrame - startFrame)
         return try buildChannelBuffer(file: file,
                                       frameCount: frameCount,
@@ -247,243 +189,7 @@ final class AudioEngineManager {
                                       playerFormat: playerFormat)
     }
 
-    // MARK: - Buffer-Based Main Playback
-
-    /// Stops any current main output and plays the supplied buffer.
-    /// The completion handler fires when the buffer has been fully played back.
-    func playMain(_ buffer: AVAudioPCMBuffer, completionHandler: @escaping () -> Void) throws {
-        pendingSeekMain?.cancel()
-        pendingSeekMain = nil
-        try ensureEngineRunning()
-        isMainPlaying = true
-        playerQueue.async { [mainPlayer] in
-            mainPlayer.stop()
-            mainPlayer.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in
-                completionHandler()
-            }
-            mainPlayer.play()
-        }
-    }
-
-    /// Appends a buffer to the main player's queue WITHOUT stopping.
-    /// The buffer plays seamlessly immediately after all currently-queued content.
-    /// Call this while a track is already playing to achieve zero-gap track transitions.
-    func chainMain(_ buffer: AVAudioPCMBuffer, completionHandler: @escaping () -> Void) {
-        playerQueue.async { [mainPlayer] in
-            mainPlayer.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in
-                completionHandler()
-            }
-        }
-        // Do NOT call stop() or play() — the player is already running.
-    }
-
-    // MARK: - Main Player Controls
-
-    func stopMain() {
-        pendingSeekMain?.cancel()
-        pendingSeekMain = nil
-        isMainPlaying = false
-        playerQueue.async { [mainPlayer] in mainPlayer.stop() }
-    }
-
-    func pauseMain() {
-        isMainPlaying = false
-        playerQueue.async { [mainPlayer] in mainPlayer.pause() }
-    }
-
-    func resumeMain() {
-        isMainPlaying = true
-        playerQueue.async { [mainPlayer] in mainPlayer.play() }
-    }
-
-    /// Seeks to `startFrame` within the file and plays the remaining segment.
-    /// The remaining segment is fully loaded into a buffer to keep subsequent
-    /// chaining buffer-based and avoid mixing file/buffer scheduling modes.
-    func seekMain(url: URL, toFrame startFrame: AVAudioFramePosition,
-                  completionHandler: @escaping () -> Void) throws {
-        let buffer = try loadBufferForMain(url: url, fromFrame: startFrame)
-        try ensureEngineRunning()
-        isMainPlaying = true
-        playerQueue.async { [mainPlayer] in
-            mainPlayer.stop()
-            mainPlayer.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in
-                completionHandler()
-            }
-            mainPlayer.play()
-        }
-    }
-
-    /// Schedules a pre-sliced buffer for seek playback on the main player.
-    ///
-    /// Cancels any pending seek work item before dispatching the new one, so rapid
-    /// seeks (e.g. slider dragging) skip stale positions instead of queuing them up.
-    /// The buffer must already be sliced to start at the desired frame — no disk I/O.
-    func scheduleSeekMain(_ buffer: AVAudioPCMBuffer,
-                          completionHandler: @escaping () -> Void) throws {
-        pendingSeekMain?.cancel()
-        try ensureEngineRunning()
-        isMainPlaying = true
-        let item = DispatchWorkItem { [mainPlayer] in
-            mainPlayer.stop()
-            mainPlayer.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in
-                completionHandler()
-            }
-            mainPlayer.play()
-        }
-        pendingSeekMain = item
-        playerQueue.async(execute: item)
-    }
-
-    /// Schedules a pre-sliced buffer for seek playback on the preview player.
-    /// Cancels any pending seek work item before dispatching.
-    func scheduleSeekPreview(_ buffer: AVAudioPCMBuffer) throws {
-        pendingSeekPreview?.cancel()
-        try ensureEngineRunning()
-        isPreviewPlaying = true
-        let item = DispatchWorkItem { [previewPlayer] in
-            previewPlayer.stop()
-            previewPlayer.scheduleBuffer(buffer)
-            previewPlayer.play()
-        }
-        pendingSeekPreview = item
-        playerQueue.async(execute: item)
-    }
-
-    func mainPlaybackPosition() -> TimeInterval? {
-        guard let nodeTime   = mainPlayer.lastRenderTime,
-              let playerTime = mainPlayer.playerTime(forNodeTime: nodeTime) else { return nil }
-        return Double(playerTime.sampleTime) / playerTime.sampleRate
-    }
-
-    func mainSampleRate() -> Double {
-        if let nodeTime   = mainPlayer.lastRenderTime,
-           let playerTime = mainPlayer.playerTime(forNodeTime: nodeTime) {
-            return playerTime.sampleRate
-        }
-        return engine.mainMixerNode.outputFormat(forBus: 0).sampleRate
-    }
-
-    // MARK: - Preview Player
-    // Uses the same buffer-based approach as the main player so that stereo audio
-    // files are downmixed to mono before reaching the mixer.  scheduleFile /
-    // scheduleSegment cannot be used here because AVAudioPlayerNode throws a
-    // runtime exception when a stereo file is scheduled on a node whose
-    // downstream connection carries a mono format.
-
-    func playOnPreview(url: URL) throws {
-        let buffer = try loadBufferForPreview(url: url)
-        try ensureEngineRunning()
-        isPreviewPlaying = true
-        playerQueue.async { [previewPlayer] in
-            previewPlayer.stop()
-            previewPlayer.scheduleBuffer(buffer)
-            previewPlayer.play()
-        }
-    }
-
-    func playOnPreview(url: URL, completionHandler: @escaping () -> Void) throws {
-        let buffer = try loadBufferForPreview(url: url)
-        try ensureEngineRunning()
-        isPreviewPlaying = true
-        playerQueue.async { [previewPlayer] in
-            previewPlayer.stop()
-            previewPlayer.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in
-                completionHandler()
-            }
-            previewPlayer.play()
-        }
-    }
-
-    func seekPreview(url: URL, toFrame startFrame: AVAudioFramePosition,
-                     completionHandler: (() -> Void)? = nil) throws {
-        let buffer = try Self.loadBuffer(url: url, fromFrame: startFrame,
-                                         outputChannel: previewOutputChannel, playerFormat: playerFormat)
-        try ensureEngineRunning()
-        isPreviewPlaying = true
-        playerQueue.async { [previewPlayer] in
-            previewPlayer.stop()
-            if let completion = completionHandler {
-                previewPlayer.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in
-                    completion()
-                }
-            } else {
-                previewPlayer.scheduleBuffer(buffer)
-            }
-            previewPlayer.play()
-        }
-    }
-
-    /// Stops current preview output and plays a pre-loaded buffer.
-    /// Mirrors `playMain(_:completionHandler:)` — callers are responsible for loading
-    /// the buffer on a background thread before calling this.
-    func playPreview(_ buffer: AVAudioPCMBuffer, completionHandler: (() -> Void)? = nil) throws {
-        try ensureEngineRunning()
-        isPreviewPlaying = true
-        playerQueue.async { [previewPlayer] in
-            previewPlayer.stop()
-            if let completion = completionHandler {
-                previewPlayer.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in
-                    completion()
-                }
-            } else {
-                previewPlayer.scheduleBuffer(buffer)
-            }
-            previewPlayer.play()
-        }
-    }
-
-    func stopPreview() {
-        pendingSeekPreview?.cancel()
-        pendingSeekPreview = nil
-        isPreviewPlaying = false
-        playerQueue.async { [previewPlayer] in previewPlayer.stop() }
-    }
-
-    /// Schedules `buffer` on the preview player without starting playback.
-    /// Call `resumePreview()` afterwards to begin playing from the prepared position.
-    func prepareSeekPreview(_ buffer: AVAudioPCMBuffer) throws {
-        pendingSeekPreview?.cancel()
-        pendingSeekPreview = nil
-        try ensureEngineRunning()
-        isPreviewPlaying = false
-        playerQueue.async { [previewPlayer] in
-            previewPlayer.stop()
-            previewPlayer.scheduleBuffer(buffer)
-        }
-    }
-
-    func pausePreview() {
-        isPreviewPlaying = false
-        playerQueue.async { [previewPlayer] in previewPlayer.pause() }
-    }
-
-    func resumePreview() {
-        isPreviewPlaying = true
-        playerQueue.async { [previewPlayer] in previewPlayer.play() }
-    }
-
-    func previewPlaybackPosition() -> TimeInterval? {
-        guard let nodeTime   = previewPlayer.lastRenderTime,
-              let playerTime = previewPlayer.playerTime(forNodeTime: nodeTime) else { return nil }
-        return Double(playerTime.sampleTime) / playerTime.sampleRate
-    }
-
-    func previewSampleRate() -> Double {
-        if let nodeTime   = previewPlayer.lastRenderTime,
-           let playerTime = previewPlayer.playerTime(forNodeTime: nodeTime) {
-            return playerTime.sampleRate
-        }
-        return engine.mainMixerNode.outputFormat(forBus: 0).sampleRate
-    }
-
-    var previewCurrentTime: TimeInterval { previewPlaybackPosition() ?? 0 }
-    var previewDuration: TimeInterval { 0 }
-
     // MARK: - Private Helpers
-
-    private func ensureEngineRunning() throws {
-        if !engine.isRunning { try engine.start() }
-    }
 
     /// Reads `frameCount` frames from `file` (at its current framePosition), downmixes to mono,
     /// then packs that mono signal into a stereo buffer with signal only in `outputChannel`.
@@ -593,6 +299,13 @@ final class AudioEngineManager {
     }
 }
 
+// MARK: - Weak Box
+
+private final class WeakBox<T: AnyObject> {
+    weak var value: T?
+    init(_ value: T) { self.value = value }
+}
+
 // MARK: - Buffer Slicing
 
 extension AVAudioPCMBuffer {
@@ -614,7 +327,7 @@ extension AVAudioPCMBuffer {
         }
         return slice
     }
-    
+
     /// Returns a new buffer containing exactly `length` frames starting at `startFrame`.
     ///
     /// This is a fast memcpy of the in-memory float data — no disk I/O.
