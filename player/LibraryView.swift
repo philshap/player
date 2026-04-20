@@ -457,6 +457,16 @@ struct LibraryView: View {
                         recomputeAllRows(resetScroll: false)
                     }
                 }
+                
+                Button("Reset Play Count") {
+                    Task {
+                        for track in selectedTracks {
+                            track.lastPlayedDate = nil
+                            track.playCount = 0
+                        }
+                        recomputeAllRows(resetScroll: false)
+                    }
+                }
 
                 Divider()
 
