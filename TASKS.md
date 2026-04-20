@@ -2,6 +2,19 @@
 
 Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 
+
+## High Priority
+
+### playlist playback / UI refinement
+- the playlist player only shows tracks while playing or paused. Insstead, when a playlist is
+  loaded, it should show the track that will be played next
+- when Stop is pressed, playback should be reset but the next track to play (the first playlist track)
+- it might be nice to show the next track in buffer in the playback view, possibly just showing the cover art
+- having next track / previous track / scrub start playback doesn't seem correct either. In most
+  cases, the playlist will be playing, but if it's paused, it should stay paused
+- if a track is playing in a playlist, its background shows its play status in all playlists.
+  Instead this should only be shown in the currently playing playlist view
+
 ---
 
 ## Medium Priority / Medium Difficulty
