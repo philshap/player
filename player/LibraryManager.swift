@@ -7,6 +7,7 @@ import Accelerate
 import AppKit
 import AVFoundation
 import Foundation
+import iTunesLibrary
 import SwiftData
 import UniformTypeIdentifiers
 
@@ -51,6 +52,8 @@ final class LibraryManager {
 
     /// Set by AppState when a library folder is opened. All file operations are relative to this.
     var libraryFolderURL: URL?
+
+    private let iTunesLibrary = try? ITLibrary(apiVersion: "1.0")
 
     // MARK: - Public API
 
@@ -128,7 +131,11 @@ final class LibraryManager {
             duration: metadata.duration,
             bpm: bpm
         )
-        track.artworkData = metadata.artworkData
+        if let artwork = metadata.artworkData {
+            track.artworkData = artwork
+        } else {
+            track.artworkData = fetchiTunesLibraryArtwork(title: metadata.title, artist: metadata.artist)
+        }
 
         modelContext.insert(track)
         return track
@@ -165,7 +172,11 @@ final class LibraryManager {
             track.album = metadata.album
             track.duration = metadata.duration
             if let bpm = metadata.bpm { track.bpm = bpm }
-            if let artwork = metadata.artworkData { track.artworkData = artwork }
+            if let artwork = metadata.artworkData {
+                track.artworkData = artwork
+            } else if track.artworkData == nil {
+                track.artworkData = fetchiTunesLibraryArtwork(title: track.title, artist: track.artist)
+            }
         }
     }
 
@@ -220,7 +231,8 @@ final class LibraryManager {
         }
         if bpm == 0 { bpm = nil }
 
-        let artworkData = await extractArtwork(from: metadataItems)
+        let iTunesItems = (try? await asset.loadMetadata(for: .iTunesMetadata)) ?? []
+        let artworkData = await extractArtwork(from: metadataItems, iTunesItems: iTunesItems)
 
         return TrackMetadata(
             title: title,
@@ -232,14 +244,36 @@ final class LibraryManager {
         )
     }
 
-    private func extractArtwork(from items: [AVMetadataItem]) async -> Data? {
-        let artworkItems = AVMetadataItem.metadataItems(from: items, filteredByIdentifier: .commonIdentifierArtwork)
-        guard let item = artworkItems.first,
-              let data = try? await item.load(.dataValue),
-              let image = NSImage(data: data) else {
-            return nil
+    private func fetchiTunesLibraryArtwork(title: String, artist: String) -> Data? {
+        guard !title.isEmpty,
+              let library = iTunesLibrary else { return nil }
+
+        let match = library.allMediaItems.first { item in
+            guard item.title.localizedCaseInsensitiveCompare(title) == .orderedSame else { return false }
+            guard !artist.isEmpty else { return true }
+            return item.artist?.name?.localizedCaseInsensitiveContains(artist) == true
         }
-        return thumbnailData(from: image, maxSize: 200)
+
+        guard let artwork = match?.artwork else { return nil }
+
+        if let data = artwork.imageData, let image = NSImage(data: data) {
+            return thumbnailData(from: image, maxSize: 200)
+        }
+        if let image = artwork.image {
+            return thumbnailData(from: image, maxSize: 200)
+        }
+        return nil
+    }
+
+    private func extractArtwork(from items: [AVMetadataItem], iTunesItems: [AVMetadataItem] = []) async -> Data? {
+        let candidates = AVMetadataItem.metadataItems(from: items, filteredByIdentifier: .commonIdentifierArtwork)
+            + AVMetadataItem.metadataItems(from: iTunesItems, filteredByIdentifier: .iTunesMetadataCoverArt)
+        for item in candidates {
+            guard let data = try? await item.load(.dataValue),
+                  let image = NSImage(data: data) else { continue }
+            return thumbnailData(from: image, maxSize: 200)
+        }
+        return nil
     }
 
     private func thumbnailData(from image: NSImage, maxSize: CGFloat) -> Data? {
