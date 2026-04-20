@@ -155,6 +155,9 @@ struct LibraryView: View {
     @State private var editingTrack: Track? = nil
     @State private var diskSpaceFree: String = ""
     @State private var showUnmigratedAlert = false
+    @State private var pendingAppleMusicURLs: [URL] = []
+    @State private var appleMusicFolderURL: URL? = nil
+    @State private var showItunesAccessSheet = false
 
     var body: some View {
         NavigationSplitView {
@@ -224,6 +227,15 @@ struct LibraryView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Some tracks use the old path format and may not play on another Mac. Use File > Migrate Library to convert them to the portable format.")
+        }
+        .alert("iTunes Library Access Needed", isPresented: $showItunesAccessSheet) {
+            Button("Select iTunes Media Folder") { openItunesMediaPanel() }
+            Button("Cancel", role: .cancel) {
+                pendingAppleMusicURLs = []
+                appleMusicFolderURL = nil
+            }
+        } message: {
+            Text("Your iTunes library is on an external volume. Select the iTunes Media folder once to allow importing from Apple Music.")
         }
     }
 
@@ -486,7 +498,7 @@ struct LibraryView: View {
             let selectedTracks = tracks.filter { selectedTrackIDs.contains($0.id) }
             deleteSelectedTracks(selectedTracks)
         }
-        .onDrop(of: [UTType.url.identifier, UTType.text.identifier], isTargeted: nil) { providers in
+        .onDrop(of: ["com.apple.tv.metadata", UTType.url.identifier, UTType.text.identifier], isTargeted: nil) { providers in
             handleDrop(providers: providers)
         }
         .id(tableGeneration)
@@ -540,10 +552,34 @@ struct LibraryView: View {
 
     func handleDrop(providers: [NSItemProvider]) -> Bool {
         var urls: [URL] = []
+        var appleMusicFolder: URL? = nil
         let group = DispatchGroup()
         let appendQueue = DispatchQueue(label: "url.append.queue")
 
         for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier("com.apple.tv.metadata") {
+                group.enter()
+                provider.loadDataRepresentation(forTypeIdentifier: "com.apple.tv.metadata") { data, _ in
+                    defer { group.leave() }
+                    guard let data,
+                          let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+                          let tracks = plist["Tracks"] as? [String: Any]
+                    else { return }
+                    let musicFolder = (plist["Music Folder"] as? String).flatMap { URL(string: $0) }
+                    let extracted = tracks.values.compactMap { entry -> URL? in
+                        guard let dict = entry as? [String: Any],
+                              let location = dict["Location"] as? String
+                        else { return nil }
+                        return URL(string: location)
+                    }
+                    appendQueue.sync {
+                        urls.append(contentsOf: extracted)
+                        if appleMusicFolder == nil { appleMusicFolder = musicFolder }
+                    }
+                }
+                continue
+            }
+
             if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
                 group.enter()
                 provider.loadDataRepresentation(forTypeIdentifier: UTType.url.identifier) { data, _ in
@@ -570,6 +606,18 @@ struct LibraryView: View {
 
         group.notify(queue: .main) {
             guard !urls.isEmpty else { return }
+
+            if let folder = appleMusicFolder {
+                let granted = appState.itunesMediaFolderURL
+                let hasAccess = granted.map { folder.path.hasPrefix($0.path) || $0.path.hasPrefix(folder.path) } ?? false
+                if !hasAccess {
+                    pendingAppleMusicURLs = urls
+                    appleMusicFolderURL = folder
+                    showItunesAccessSheet = true
+                    return
+                }
+            }
+
             Task {
                 do {
                     try await appState.libraryManager.importFiles(
@@ -584,6 +632,31 @@ struct LibraryView: View {
         }
 
         return true
+    }
+
+    private func openItunesMediaPanel() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Select your iTunes Media folder to allow importing from Apple Music."
+        panel.prompt = "Grant Access"
+        panel.directoryURL = appleMusicFolderURL?.deletingLastPathComponent()
+        let urlsToImport = pendingAppleMusicURLs
+        panel.begin { response in
+            pendingAppleMusicURLs = []
+            appleMusicFolderURL = nil
+            guard response == .OK, let url = panel.url else { return }
+            appState.grantItunesMediaAccess(at: url)
+            Task {
+                do {
+                    try await appState.libraryManager.importFiles(urls: urlsToImport, modelContext: modelContext)
+                } catch {
+                    importError = error.localizedDescription
+                    showImportError = true
+                }
+            }
+        }
     }
 
 }

@@ -45,6 +45,9 @@ final class AppState {
     /// Whether the library is open and ready to use.
     var isLibraryReady: Bool { modelContainer != nil && libraryFolderURL != nil }
 
+    /// The iTunes Media folder URL for Apple Music drag imports (security-scoped access is active).
+    private(set) var itunesMediaFolderURL: URL?
+
     /// Controls the welcome/onboarding sheet visibility.
     var showWelcomeSheet: Bool = false
 
@@ -67,6 +70,7 @@ final class AppState {
         try? engine.start()
 
         resolveExistingLibrary()
+        resolveItunesMediaFolder()
     }
 
     // MARK: - Library Resolution
@@ -237,6 +241,27 @@ final class AppState {
             counter += 1
         }
         return candidate
+    }
+
+    // MARK: - iTunes Media Access
+
+    func grantItunesMediaAccess(at url: URL) {
+        _ = url.startAccessingSecurityScopedResource()
+        if let bookmark = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
+            UserDefaults.standard.set(bookmark, forKey: "itunesMediaFolderBookmark")
+        }
+        itunesMediaFolderURL = url
+    }
+
+    private func resolveItunesMediaFolder() {
+        guard let data = UserDefaults.standard.data(forKey: "itunesMediaFolderBookmark") else { return }
+        var isStale = false
+        guard let url = try? URL(resolvingBookmarkData: data, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &isStale) else { return }
+        if isStale, let refreshed = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
+            UserDefaults.standard.set(refreshed, forKey: "itunesMediaFolderBookmark")
+        }
+        _ = url.startAccessingSecurityScopedResource()
+        itunesMediaFolderURL = url
     }
 
     // MARK: - Private Helpers
