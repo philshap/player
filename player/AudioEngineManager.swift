@@ -51,12 +51,6 @@ final class AudioEngineManager {
     /// Derived from the engine's hardware output; all loaded buffers are converted to this.
     private(set) var playerFormat: AVAudioFormat!
 
-    /// Fallback sample rate for time calculations when the player node hasn't
-    /// rendered yet (so `player.lastRenderTime` is nil).
-    var fallbackSampleRate: Double {
-        engine.mainMixerNode.outputFormat(forBus: 0).sampleRate
-    }
-
     // MARK: - Registry
 
     /// Weak references to attached controllers, so config changes can fan out.

@@ -222,11 +222,10 @@ final class MainPlaybackController: PlaybackController {
         // never reset by a stop/play cycle because chaining doesn't stop the node.
         // Store the node's current position as a negative offset so updatePosition()
         // computes time relative to THIS track's start rather than the session start.
-        let sampleRate = sampleRate()
         if let pos = playbackPosition() {
-            seekFrameOffset = -AVAudioFramePosition(pos * sampleRate)
+            seekTimeOffset = -pos
         } else {
-            seekFrameOffset = 0
+            seekTimeOffset = 0
         }
 
         // Keep playbackGeneration unchanged: the chained track's completion handler
@@ -341,8 +340,8 @@ final class MainPlaybackController: PlaybackController {
                           !Task.isCancelled else { return }
 
                     // Slice for cue points
-                    let sampleRate = self.sampleRate()
-                    guard let playBuffer = self.sliceForCuePoints(fullBuffer, track: nextTrack, sampleRate: sampleRate) else {
+                    let bufferSampleRate = fullBuffer.format.sampleRate
+                    guard let playBuffer = self.sliceForCuePoints(fullBuffer, track: nextTrack, sampleRate: bufferSampleRate) else {
                         return
                     }
 

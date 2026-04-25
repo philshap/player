@@ -82,10 +82,10 @@ class PlaybackController {
 
     // MARK: - Internal Playback State
 
-    /// Absolute frame offset (in the full buffer) at which the currently scheduled
-    /// slice begins. Used to convert the player node's accumulated sample time into
+    /// Time offset (seconds) at which the currently scheduled slice begins.
+    /// Used to convert the player node's accumulated sample time into
     /// a track-relative `currentTime`.
-    @ObservationIgnored var seekFrameOffset: AVAudioFramePosition = 0
+    @ObservationIgnored var seekTimeOffset: TimeInterval = 0
 
     @ObservationIgnored var positionTimer: Timer?
 
@@ -174,7 +174,7 @@ class PlaybackController {
         loadTask = nil
         playbackGeneration += 1
         let gen = playbackGeneration
-        seekFrameOffset = 0
+        seekTimeOffset = 0
 
         willStartTrack(track, generation: gen)
 
@@ -218,7 +218,7 @@ class PlaybackController {
         playbackGeneration += 1
         isPlaying = false
         currentTime = 0
-        seekFrameOffset = 0
+        seekTimeOffset = 0
         stopPositionTimer()
         // Park the buffer at position 0 so resume() works after stop.
         // Falls back to a plain stop when no buffer is loaded yet.
@@ -240,7 +240,7 @@ class PlaybackController {
         currentTrack      = nil
         currentTime       = 0
         duration          = 0
-        seekFrameOffset   = 0
+        seekTimeOffset   = 0
         stopPositionTimer()
     }
 
@@ -306,7 +306,7 @@ class PlaybackController {
         playbackGeneration += 1
         let gen = playbackGeneration
 
-        seekFrameOffset = 0
+        seekTimeOffset = 0
         currentTrack    = track
         duration        = effectiveDuration(for: track)
         currentTime     = 0
@@ -472,14 +472,6 @@ class PlaybackController {
         return Double(playerTime.sampleTime) / playerTime.sampleRate
     }
 
-    func sampleRate() -> Double {
-        if let nodeTime   = player.lastRenderTime,
-           let playerTime = player.playerTime(forNodeTime: nodeTime) {
-            return playerTime.sampleRate
-        }
-        return audioEngine.fallbackSampleRate
-    }
-
     // MARK: - Configuration-Change Hook
 
     /// Called by `AudioEngineManager` when the audio hardware configuration changes.
@@ -501,12 +493,12 @@ class PlaybackController {
                             position: TimeInterval,
                             generation gen: Int,
                             startPlayback: Bool = true) {
-        let sampleRate    = sampleRate()
-        let cueInFrame    = effectiveStartFrame(for: track, sampleRate: sampleRate)
-        let cueOutFrame   = effectiveEndFrame(for: track, sampleRate: sampleRate)
-        let absoluteFrame = cueInFrame + AVAudioFramePosition(position * sampleRate)
+        let bufferSampleRate = fullBuffer.format.sampleRate
+        let cueInFrame       = effectiveStartFrame(for: track, sampleRate: bufferSampleRate)
+        let cueOutFrame      = effectiveEndFrame(for: track, sampleRate: bufferSampleRate)
+        let absoluteFrame    = cueInFrame + AVAudioFramePosition(position * bufferSampleRate)
 
-        seekFrameOffset = AVAudioFramePosition(position * sampleRate)
+        seekTimeOffset = position
 
         let slice: AVAudioPCMBuffer?
         if let cueOut = cueOutFrame {
@@ -544,9 +536,9 @@ class PlaybackController {
     /// Parks `fullBuffer` at position 0 on the player without starting playback,
     /// so a subsequent `resume()` begins at the beginning of the track.
     private func parkAtZero(fullBuffer: AVAudioPCMBuffer, track: Track) {
-        let sampleRate = sampleRate()
-        seekFrameOffset = 0
-        guard let slice = sliceForCuePoints(fullBuffer, track: track, sampleRate: sampleRate) else {
+        let bufferSampleRate = fullBuffer.format.sampleRate
+        seekTimeOffset = 0
+        guard let slice = sliceForCuePoints(fullBuffer, track: track, sampleRate: bufferSampleRate) else {
             stopPlayer()
             return
         }
@@ -616,8 +608,7 @@ class PlaybackController {
         guard isPlaying else { return }
 
         if let position = playbackPosition() {
-            let offsetSeconds = Double(seekFrameOffset) / sampleRate()
-            let computed      = position + offsetSeconds
+            let computed = position + seekTimeOffset
             currentTime       = max(0, min(computed, duration))
         } else if !player.isPlaying {
             // Engine stopped unexpectedly (e.g. audio device removed). Reflect that.
