@@ -5,15 +5,14 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 
 ## High Priority
 
-### playlist playback / UI refinement
-- the playlist player only shows tracks while playing or paused. Insstead, when a playlist is
-  loaded, it should show the track that will be played next
-- when Stop is pressed, playback should be reset but the next track to play (the first playlist track)
-- it might be nice to show the next track in buffer in the playback view, possibly just showing the cover art
-- having next track / previous track / scrub start playback doesn't seem correct either. In most
-  cases, the playlist will be playing, but if it's paused, it should stay paused
-- if a track is playing in a playlist, its background shows its play status in all playlists.
-  Instead this should only be shown in the currently playing playlist view
+### Misc bugs / features
+- remove old support for non-directory libraries. Or, add it back as an option to select so user can choose which model they want
+- show bpm for currently playing performance track
+- in performance playback view, show info for next track that will be played: artwork, track, artist, bpm, track length
+- show larger artwork in performance playback?
+- maybe use album cover to "tint" window background color simliar to safari web pages?
+- when detecting bpm, quantize to multiple of 5, e.g. 104 -> 105, 99 -> 100, 101 -> 100.
+- the app asks on launch to access apple music, is there a way to defer the request until apple music access is needed, before trying to access metadata?
 
 ---
 
