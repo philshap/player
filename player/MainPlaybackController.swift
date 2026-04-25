@@ -53,6 +53,7 @@ final class MainPlaybackController: PlaybackController {
     /// Buffer loaded ahead of time for the upcoming track.
     @ObservationIgnored private var preloadedBuffer:      AVAudioPCMBuffer?
     @ObservationIgnored private var preloadedBufferIndex: Int               = -1
+    @ObservationIgnored private var preloadedTrackID: UUID?
 
     /// Background task that loads the next track's buffer.
     @ObservationIgnored private var prefetchTask: Task<Void, Never>?
@@ -136,6 +137,7 @@ final class MainPlaybackController: PlaybackController {
 
     func nextTrack() {
         cancelGap()
+        refreshPlaylistFromActiveModel()
         if currentTrack == nil {
             if !playlist.isEmpty { play() }
             return
@@ -147,6 +149,7 @@ final class MainPlaybackController: PlaybackController {
     }
 
     func previousTrack() {
+        refreshPlaylistFromActiveModel()
         if currentTrack == nil {
             if !playlist.isEmpty { play() }
             return
@@ -164,14 +167,16 @@ final class MainPlaybackController: PlaybackController {
         guard index >= 0 && index < playlist.count else { return }
 
         recordPlayIfNeeded()
+        let targetTrack = playlist[index]
 
         // Claim the preloaded buffer before cancelPrefetch() wipes it.
-        let cachedBuffer: AVAudioPCMBuffer? = (preloadedBufferIndex == index) ? preloadedBuffer : nil
+        let cachedBuffer: AVAudioPCMBuffer? =
+            (preloadedBufferIndex == index && preloadedTrackID == targetTrack.id) ? preloadedBuffer : nil
 
         currentTrackIndex        = index
         currentTrackPlayRecorded = false
 
-        playTrack(playlist[index], cachedBuffer: cachedBuffer, startPlayback: startPlayback)
+        playTrack(targetTrack, cachedBuffer: cachedBuffer, startPlayback: startPlayback)
     }
 
     // MARK: - Overridden Hooks
@@ -210,6 +215,7 @@ final class MainPlaybackController: PlaybackController {
         chainedBuffer        = nil
         preloadedBuffer      = nil
         preloadedBufferIndex = -1
+        preloadedTrackID     = nil
 
         let track                = playlist[index]
         currentTrackIndex        = index
@@ -238,17 +244,9 @@ final class MainPlaybackController: PlaybackController {
 
     /// Auto-advances after a track ends naturally (no chained successor).
     private func autoAdvance() {
-        // Re-read the authoritative playlist from the model before deciding what to do.
-        // Guards against the notification handler and the audio completion callback
-        // racing on the main thread.
-        if let model = activePlaylistModel {
-            let fresh = model.orderedTracks
-            playlist = fresh
-            if let currentID = currentTrack?.id,
-               let newIndex = fresh.firstIndex(where: { $0.id == currentID }) {
-                currentTrackIndex = newIndex
-            }
-        }
+        // Re-read the authoritative playlist before deciding what to do.
+        // Guards against races between model notifications and completion callbacks.
+        refreshPlaylistFromActiveModel()
 
         let next = currentTrackIndex + 1
         if next < playlist.count {
@@ -348,6 +346,7 @@ final class MainPlaybackController: PlaybackController {
                     // Always cache the FULL buffer so playTrack can use it on demand.
                     self.preloadedBuffer      = fullBuffer
                     self.preloadedBufferIndex = nextIndex
+                    self.preloadedTrackID     = nextTrack.id
 
                     // Chain only when no gap is configured, the player is running,
                     // and we haven't already chained something.
@@ -372,10 +371,20 @@ final class MainPlaybackController: PlaybackController {
         prefetchTask         = nil
         preloadedBuffer      = nil
         preloadedBufferIndex = -1
+        preloadedTrackID     = nil
     }
 
     private func cancelChain() {
         chainedNextIndex = nil
+        chainedBuffer = nil
+
+        // If the chained successor was invalidated (e.g. playlist reorder), any
+        // prefetched cache at that index is stale too. Clear it so manual
+        // next/auto-advance can't reuse the old track buffer.
+        preloadedBuffer = nil
+        preloadedBufferIndex = -1
+        preloadedTrackID = nil
+
         // Note: we do NOT dequeue the chained buffer from the player node here.
         // If the player is stopped (e.g. stop()/seek()) the buffer queue is cleared
         // automatically by AVAudioPlayerNode.stop().
@@ -424,6 +433,18 @@ final class MainPlaybackController: PlaybackController {
             if nextIndex < playlist.count {
                 prefetchAndChain(nextIndex: nextIndex, generation: playbackGeneration)
             }
+        }
+    }
+
+    /// Synchronously refreshes playlist order/index from the authoritative model.
+    /// Used by manual transport actions so they see reorder changes immediately,
+    /// even if a notification is still queued on the run loop.
+    private func refreshPlaylistFromActiveModel() {
+        guard let model = activePlaylistModel else { return }
+        playlist = model.orderedTracks
+        if let currentID = currentTrack?.id,
+           let newIndex = playlist.firstIndex(where: { $0.id == currentID }) {
+            currentTrackIndex = newIndex
         }
     }
 

@@ -12,7 +12,6 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 - maybe use album cover to "tint" window background color simliar to safari web pages?
 - when detecting bpm, quantize to multiple of 5, e.g. 104 -> 105, 99 -> 100, 101 -> 100.
 - the app asks on launch to access apple music, is there a way to defer the request until apple music access is needed, before trying to access metadata?
-- remove old support for non-directory libraries. Or, add it back as an option to select so user can choose which model they want
 
 ---
 
@@ -44,6 +43,9 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 ---
 
 ## Low Priority / Low Difficulty
+
+- remove old support for non-directory libraries. Or, add it back as an option to select so user can choose which model they want
+
 
 ### Keyboard Shortcut Expansion
 - Seek forward/back for preview
