@@ -215,6 +215,8 @@ struct LibraryView: View {
             recomputeAllRows(resetScroll: newCount > oldCount)
         }
         .onChange(of: tracks.map(\.rating)) { recomputeAllRows(resetScroll: false) }
+        .onChange(of: tracks.map(\.playCount)) { recomputeAllRows(resetScroll: false) }
+        .onChange(of: tracks.map(\.lastPlayedDate)) { recomputeAllRows(resetScroll: false) }
         .onChange(of: searchText) { recomputeFilteredRows(resetScroll: false) }
         .onChange(of: sortOrder) { recomputeFilteredRows() }
         .sheet(item: $editingTrack) { track in
