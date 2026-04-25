@@ -319,6 +319,10 @@ class PlaybackController {
         // Slow path: buffer must be loaded from disk.
         // Stop the player node and halt the position timer so the old track's
         // accumulated time doesn't advance against the new track's duration.
+        // Clear the full-buffer cache first so seeks during async load cannot
+        // reuse the previously loaded track's buffer.
+        currentFullBuffer = nil
+        
         // isPlaying is intentionally NOT cleared here — it captures whether the
         // user wants playback, so next/previousTrack() can read wasPlaying correctly
         // even when a second navigation arrives while the first track is still loading.
