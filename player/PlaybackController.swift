@@ -248,7 +248,6 @@ class PlaybackController {
         guard let track = currentTrack else { return }
 
         seekSerial += 1
-        let serial = seekSerial
 
         let clamped = time.clamped(to: 0...duration)
 
@@ -260,7 +259,6 @@ class PlaybackController {
         }
 
         let wasPlaying = isPlaying
-        let hasCached = currentFullBuffer != nil
 
         loadTask?.cancel()
         loadTask = nil
