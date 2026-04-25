@@ -256,14 +256,11 @@ class PlaybackController {
             // During drag: the player is already paused by beginInteractiveSeek().
             // Just update the displayed position; endInteractiveSeek() will apply it once.
             currentTime = clamped
-            os_log("seek #%d  t=%.2f  interactive (deferred)", log: seekLog, type: .debug, serial, clamped)
             return
         }
 
         let wasPlaying = isPlaying
         let hasCached = currentFullBuffer != nil
-        os_log("seek #%d  t=%.2f  playing=%d  hasCachedBuffer=%d", log: seekLog, type: .debug,
-               serial, time, wasPlaying ? 1 : 0, hasCached ? 1 : 0)
 
         loadTask?.cancel()
         loadTask = nil
@@ -282,10 +279,8 @@ class PlaybackController {
         }
 
         // Slow path: buffer not yet loaded. Load in background, then seek.
-        os_log("seek #%d  slow-path load started", log: seekLog, type: .debug, serial)
         loadBuffer(for: track, generation: gen) { [weak self] buffer in
             guard let self else { return }
-            os_log("seek #%d  slow-path load finished", log: seekLog, type: .debug, serial)
             self.currentFullBuffer = buffer
             // Re-evaluate: if resume() was called while the buffer was loading, honour it.
             let shouldPlay = wasPlaying || self.isPlaying
@@ -404,28 +399,22 @@ class PlaybackController {
         pendingSeek?.cancel()
         seekSerial += 1
         let serial = seekSerial
-        os_log("scheduleSeek #%d  cancelledPrevious=%d", log: seekLog, type: .debug, serial, hadPending ? 1 : 0)
         try audioEngine.ensureRunning()
         var item: DispatchWorkItem!
         item = DispatchWorkItem { [player] in
             guard !item.isCancelled else {
-                os_log("scheduleSeek #%d  skipped (cancelled)", log: seekLog, type: .debug, serial)
                 return
             }
             let t0 = CACurrentMediaTime()
-            os_log("scheduleSeek #%d  executing  stop…", log: seekLog, type: .debug, serial)
             player.stop()
             let stopMs = Int((CACurrentMediaTime() - t0) * 1000)
-            os_log("scheduleSeek #%d  stop took %dms  scheduling…", log: seekLog, type: .debug, serial, stopMs)
             Self.schedule(buffer, on: player, completion: completion)
             // A newer seek may have arrived while we were stopping. If so, skip play() —
             // the next item will stop() an idle player (fast) rather than a running one (slow).
             guard !item.isCancelled else {
-                os_log("scheduleSeek #%d  skipping play (cancelled after stop)", log: seekLog, type: .debug, serial)
                 return
             }
             player.play()
-            os_log("scheduleSeek #%d  done", log: seekLog, type: .debug, serial)
         }
         pendingSeek = item
         audioEngine.playerQueue.async(execute: item)
@@ -444,21 +433,16 @@ class PlaybackController {
         pendingSeek?.cancel()
         seekSerial += 1
         let serial = seekSerial
-        os_log("prepareSeek #%d  cancelledPrevious=%d", log: seekLog, type: .debug, serial, hadPending ? 1 : 0)
         try audioEngine.ensureRunning()
         var item: DispatchWorkItem!
         item = DispatchWorkItem { [player] in
             guard !item.isCancelled else {
-                os_log("prepareSeek #%d  skipped (cancelled)", log: seekLog, type: .debug, serial)
                 return
             }
             let t0 = CACurrentMediaTime()
-            os_log("prepareSeek #%d  executing  stop…", log: seekLog, type: .debug, serial)
             player.stop()
             let stopMs = Int((CACurrentMediaTime() - t0) * 1000)
-            os_log("prepareSeek #%d  stop took %dms  scheduling…", log: seekLog, type: .debug, serial, stopMs)
             Self.schedule(buffer, on: player, completion: completion)
-            os_log("prepareSeek #%d  done", log: seekLog, type: .debug, serial)
         }
         pendingSeek = item
         audioEngine.playerQueue.async(execute: item)
