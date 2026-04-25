@@ -53,7 +53,8 @@ final class LibraryManager {
     /// Set by AppState when a library folder is opened. All file operations are relative to this.
     var libraryFolderURL: URL?
 
-    private let iTunesLibrary = try? ITLibrary(apiVersion: "1.0")
+    /// Lazily initialized to avoid prompting for media-library access on app launch.
+    private var iTunesLibrary: ITLibrary?
 
     // MARK: - Public API
 
@@ -245,6 +246,10 @@ final class LibraryManager {
     }
 
     private func fetchiTunesLibraryArtwork(title: String, artist: String) -> Data? {
+        if iTunesLibrary == nil {
+            iTunesLibrary = try? ITLibrary(apiVersion: "1.0")
+        }
+
         guard !title.isEmpty,
               let library = iTunesLibrary else { return nil }
 
@@ -376,7 +381,11 @@ final class LibraryManager {
         while bpm < 50  { bpm *= 2 }
         while bpm > 275 { bpm /= 2 }
 
-        return round(bpm)
+        return quantizeBPMToNearestFive(bpm)
+    }
+
+    private nonisolated static func quantizeBPMToNearestFive(_ bpm: Double) -> Double {
+        (bpm / 5.0).rounded() * 5.0
     }
 
     private func metadataValue(

@@ -692,6 +692,7 @@ struct TrackInfoView: View {
     let track: Track
     var artworkSize: CGFloat = 52
     var titleFont: Font = .title3
+    var showsBPM: Bool = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -701,14 +702,32 @@ struct TrackInfoView: View {
                     .font(titleFont)
                     .fontWeight(.medium)
                     .lineLimit(1)
+                    .truncationMode(.tail)
                 if !track.artist.isEmpty {
-                    Text(track.artist)
-                        .font(.subheadline)
+                    HStack(spacing: 8) {
+                        Text(track.artist)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        if showsBPM {
+                            Label(formattedBPM, systemImage: "metronome")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } else if showsBPM {
+                    Label(formattedBPM, systemImage: "metronome")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
                 }
             }
         }
+    }
+
+    private var formattedBPM: String {
+        guard let bpm = track.bpm else { return "BPM --" }
+        return "\(Int(bpm.rounded())) BPM"
     }
 }
 

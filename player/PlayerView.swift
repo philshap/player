@@ -3,6 +3,7 @@
 //  player
 //
 
+import AppKit
 import SwiftUI
 
 struct PlayerView: View {
@@ -10,17 +11,6 @@ struct PlayerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if appState.isPerformanceMode {
-                HStack {
-                    Image(systemName: "lock.fill")
-                    Text("Performance Mode")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                }
-                .foregroundStyle(.orange)
-                .padding(.vertical, 4)
-            }
-
             // Main Playback Section
             mainPlaybackSection
                 .padding()
@@ -32,6 +22,14 @@ struct PlayerView: View {
                 .padding()
         }
         .frame(minWidth: 500, minHeight: 300)
+        .background(
+            WindowTitleUpdater(title: playerWindowTitle)
+                .frame(width: 0, height: 0)
+        )
+    }
+
+    private var playerWindowTitle: String {
+        appState.isPerformanceMode ? "Player - Performance 🔒" : "Player"
     }
 
     // MARK: - Main Playback Section
@@ -39,6 +37,10 @@ struct PlayerView: View {
     private var mainPlaybackSection: some View {
         let main = appState.mainPlayback
         let isStereo = main.outputChannel == .both
+        let isPerformance = appState.isPerformanceMode
+        let artworkSize: CGFloat = isPerformance ? 72 : 52
+        let titleFont: Font = isPerformance ? .title2 : .title3
+        let upNextPanelWidth: CGFloat = 260
 
         return VStack(spacing: 8) {
             HStack {
@@ -62,12 +64,26 @@ struct PlayerView: View {
             // Track info
             if let track = main.currentTrack {
                 HStack {
-                    TrackInfoView(track: track, artworkSize: 52, titleFont: .title3)
+                    TrackInfoView(
+                        track: track,
+                        artworkSize: artworkSize,
+                        titleFont: titleFont,
+                        showsBPM: isPerformance
+                    )
                     Spacer()
+                    if isPerformance {
+                        performanceNextTrackSection(track: performanceNextTrack, fixedWidth: upNextPanelWidth)
+                    }
                 }
             } else {
-                Text("No track loaded")
-                    .foregroundStyle(.secondary)
+                HStack {
+                    Text("No track loaded")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if isPerformance {
+                        performanceNextTrackSection(track: performanceNextTrack, fixedWidth: upNextPanelWidth)
+                    }
+                }
             }
 
             // Seek bar
@@ -139,6 +155,56 @@ struct PlayerView: View {
         }
     }
 
+    @ViewBuilder
+    private func performanceNextTrackSection(track: Track?, fixedWidth: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Up Next")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+
+            if let track {
+                HStack(spacing: 12) {
+                    TrackInfoView(track: track, artworkSize: 42, titleFont: .headline)
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(formattedBPM(track.bpm))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(track.duration.mmss())
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+            } else {
+                Text("No next track queued")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: fixedWidth, alignment: .leading)
+        .padding(8)
+        .background(Color.secondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func formattedBPM(_ bpm: Double?) -> String {
+        guard let bpm else { return "BPM --" }
+        return "\(Int(bpm.rounded())) BPM"
+    }
+
+    private var performanceNextTrack: Track? {
+        let main = appState.mainPlayback
+        guard !main.playlist.isEmpty else { return nil }
+        if main.currentTrack == nil {
+            return main.playlist.first
+        }
+        let nextIndex = main.currentTrackIndex + 1
+        guard nextIndex >= 0, nextIndex < main.playlist.count else { return nil }
+        return main.playlist[nextIndex]
+    }
+
     // MARK: - Preview/Cue Section
 
     private var previewSection: some View {
@@ -167,7 +233,7 @@ struct PlayerView: View {
             // Track info
             if let track = preview.currentTrack {
                 HStack {
-                    TrackInfoView(track: track, artworkSize: 52, titleFont: .title3)
+                    TrackInfoView(track: track, artworkSize: 52, titleFont: .title3, showsBPM: true)
                     Spacer()
                 }
             } else {
@@ -201,46 +267,67 @@ struct PlayerView: View {
                     .frame(width: 50, alignment: .leading)
             }
 
-            // Transport controls and volume
-            HStack(spacing: 16) {
-                Button { preview.togglePlayPause() } label: {
-                    Image(systemName: preview.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title2)
-                }
-                .buttonStyle(.borderless)
-                .focusable(false)
-
-                Button { preview.stop() } label: {
-                    Image(systemName: "stop.fill")
-                        .font(.title2)
-                }
-                .buttonStyle(.borderless)
-                .focusable(false)
-
-                Spacer()
-
-                // Volume slider
-                HStack(spacing: 4) {
-                    Image(systemName: "speaker.fill")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Slider(
-                        value: Binding(
-                            get: { preview.volume },
-                            set: { preview.volume = $0 }
-                        ),
-                        in: 0...1
-                    )
+            // Transport controls centered, volume stays right-aligned.
+            ZStack {
+                HStack(spacing: 16) {
+                    Button { preview.togglePlayPause() } label: {
+                        Image(systemName: preview.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.title2)
+                    }
+                    .buttonStyle(.borderless)
                     .focusable(false)
-                    .frame(width: 100)
 
-                    Image(systemName: "speaker.wave.3.fill")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Button { preview.stop() } label: {
+                        Image(systemName: "stop.fill")
+                            .font(.title2)
+                    }
+                    .buttonStyle(.borderless)
+                    .focusable(false)
+                }
+
+                HStack {
+                    Spacer()
+                    // Volume slider
+                    HStack(spacing: 4) {
+                        Image(systemName: "speaker.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Slider(
+                            value: Binding(
+                                get: { preview.volume },
+                                set: { preview.volume = $0 }
+                            ),
+                            in: 0...1
+                        )
+                        .focusable(false)
+                        .frame(width: 100)
+
+                        Image(systemName: "speaker.wave.3.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
         }
     }
 
+}
+
+private struct WindowTitleUpdater: NSViewRepresentable {
+    let title: String
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            view.window?.title = title
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            nsView.window?.title = title
+        }
+    }
 }

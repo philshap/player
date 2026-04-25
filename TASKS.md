@@ -6,12 +6,6 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 ## High Priority
 
 ### Misc bugs / features
-- show bpm for currently playing performance track
-- in performance playback view, show info for next track that will be played: artwork, track, artist, bpm, track length
-- show larger artwork in performance playback?
-- maybe use album cover to "tint" window background color simliar to safari web pages?
-- when detecting bpm, quantize to multiple of 5, e.g. 104 -> 105, 99 -> 100, 101 -> 100.
-- the app asks on launch to access apple music, is there a way to defer the request until apple music access is needed, before trying to access metadata?
 
 ---
 
