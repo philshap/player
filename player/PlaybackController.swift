@@ -393,19 +393,14 @@ class PlaybackController {
     /// seeks (e.g. slider dragging) skip stale positions instead of queuing up.
     /// The buffer must already be sliced to start at the desired frame — no disk I/O.
     func scheduleSeek(_ buffer: AVAudioPCMBuffer, completion: (() -> Void)? = nil) throws {
-        let hadPending = pendingSeek != nil
         pendingSeek?.cancel()
         seekSerial += 1
-        let serial = seekSerial
-        try audioEngine.ensureRunning()
         var item: DispatchWorkItem!
         item = DispatchWorkItem { [player] in
             guard !item.isCancelled else {
                 return
             }
-            let t0 = CACurrentMediaTime()
             player.stop()
-            let stopMs = Int((CACurrentMediaTime() - t0) * 1000)
             Self.schedule(buffer, on: player, completion: completion)
             // A newer seek may have arrived while we were stopping. If so, skip play() —
             // the next item will stop() an idle player (fast) rather than a running one (slow).
@@ -427,19 +422,15 @@ class PlaybackController {
     /// play→pause round-trip that can stall the serial player queue for render-cycle
     /// intervals (10–90 ms each) when many events arrive in quick succession.
     func prepareSeek(_ buffer: AVAudioPCMBuffer, completion: (() -> Void)? = nil) throws {
-        let hadPending = pendingSeek != nil
         pendingSeek?.cancel()
         seekSerial += 1
-        let serial = seekSerial
         try audioEngine.ensureRunning()
         var item: DispatchWorkItem!
         item = DispatchWorkItem { [player] in
             guard !item.isCancelled else {
                 return
             }
-            let t0 = CACurrentMediaTime()
             player.stop()
-            let stopMs = Int((CACurrentMediaTime() - t0) * 1000)
             Self.schedule(buffer, on: player, completion: completion)
         }
         pendingSeek = item
