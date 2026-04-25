@@ -103,8 +103,9 @@ struct PlaylistWindowView: View {
     @ViewBuilder
     private func trackList(_ tracks: [Track], playlist: Playlist) -> some View {
         List(selection: $selectedTrackID) {
+            let isActivePlaylist = appState.isPerformanceMode && appState.performingPlaylistID == playlist.id
             ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
-                PlaylistTrackRow(track: track, index: index, isCurrentlyPlaying: appState.mainPlayback.currentTrack?.id == track.id)
+                PlaylistTrackRow(track: track, index: index, isCurrentlyPlaying: isActivePlaylist && appState.mainPlayback.currentTrack?.id == track.id, isActivePlaylist: isActivePlaylist)
                     .draggable(TrackTransfer.encode(trackIDs: [track.id]))
                     .tag(track.id)
                     .contextMenu {
@@ -298,7 +299,11 @@ private struct PerformanceControlsView: View {
                         get: { main.currentTime },
                         set: { main.seek(to: $0) }
                     ),
-                    in: 0...max(main.duration, 0.01)
+                    in: 0...max(main.duration, 0.01),
+                    onEditingChanged: { editing in
+                        if editing { main.beginInteractiveSeek() }
+                        else { main.endInteractiveSeek() }
+                    }
                 )
 
                 Text(main.duration.mmss())
@@ -427,6 +432,7 @@ private struct PlaylistTrackRow: View {
     let track: Track
     let index: Int
     let isCurrentlyPlaying: Bool
+    let isActivePlaylist: Bool
 
     var body: some View {
         HStack(spacing: 8) {
@@ -512,7 +518,7 @@ private struct PlaylistTrackRow: View {
         .padding(.vertical, 2)
         .background {
             // Progress bar in isolated subview — only this re-renders on currentTime updates
-            TrackProgressBackground(trackID: track.id)
+            TrackProgressBackground(trackID: track.id, isActivePlaylist: isActivePlaylist)
         }
     }
 
@@ -524,11 +530,12 @@ private struct PlaylistTrackRow: View {
 /// affects this tiny background view, not the row or the List.
 private struct TrackProgressBackground: View {
     let trackID: UUID
+    let isActivePlaylist: Bool
     @Environment(AppState.self) private var appState
 
     var body: some View {
         let main = appState.mainPlayback
-        let isPlaying = main.currentTrack?.id == trackID
+        let isPlaying = isActivePlaylist && main.currentTrack?.id == trackID
 
         if isPlaying, main.duration > 0 {
             GeometryReader { geo in

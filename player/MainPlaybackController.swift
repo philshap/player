@@ -88,6 +88,7 @@ final class MainPlaybackController: PlaybackController {
         activePlaylistModel = playlistModel
         playlist = playlistModel.orderedTracks
         startPlaylistChangeObserver()
+        preloadFirstTrack()
     }
 
     func loadTracks(_ tracks: [Track]) {
@@ -95,6 +96,14 @@ final class MainPlaybackController: PlaybackController {
         activePlaylistModel = nil
         startPlaylistChangeObserver()
         playlist = tracks
+        preloadFirstTrack()
+    }
+
+    /// Loads track 0 into the audio buffer without starting playback so that the
+    /// first press of play is instant.
+    private func preloadFirstTrack() {
+        guard !playlist.isEmpty else { return }
+        playTrack(playlist[0], startPlayback: false)
     }
 
     // MARK: - Transport
@@ -114,13 +123,15 @@ final class MainPlaybackController: PlaybackController {
         super.resume()
     }
 
-    /// Full reset — matches the pre-refactor behavior of `MainPlaybackController.stop`.
+    /// Full reset — clears playback state, rewinds to track 0, and preloads it so
+    /// the next play() starts instantly.
     override func stop() {
         cancelGap()
         cancelPrefetch()
         cancelChain()
         reset()
         currentTrackIndex = 0
+        preloadFirstTrack()
     }
 
     func nextTrack() {
@@ -129,9 +140,10 @@ final class MainPlaybackController: PlaybackController {
             if !playlist.isEmpty { play() }
             return
         }
+        let wasPlaying = isPlaying
         let next = currentTrackIndex + 1
         guard next < playlist.count else { stop(); return }
-        playTrack(at: next)
+        playTrack(at: next, startPlayback: wasPlaying)
     }
 
     func previousTrack() {
@@ -139,13 +151,16 @@ final class MainPlaybackController: PlaybackController {
             if !playlist.isEmpty { play() }
             return
         }
-        playTrack(at: max(currentTrackIndex - 1, 0))
+        let wasPlaying = isPlaying
+        playTrack(at: max(currentTrackIndex - 1, 0), startPlayback: wasPlaying)
     }
 
     // MARK: - Playlist-aware playTrack
 
-    /// Starts playback of the track at `index`, using any prefetched buffer if available.
-    private func playTrack(at index: Int) {
+    /// Loads the track at `index`, using any prefetched buffer if available.
+    /// When `startPlayback` is false the track is parked at position 0 so that
+    /// a subsequent `resume()` begins without reloading (preserves pause state).
+    private func playTrack(at index: Int, startPlayback: Bool = true) {
         guard index >= 0 && index < playlist.count else { return }
 
         recordPlayIfNeeded()
@@ -156,7 +171,7 @@ final class MainPlaybackController: PlaybackController {
         currentTrackIndex        = index
         currentTrackPlayRecorded = false
 
-        playTrack(playlist[index], cachedBuffer: cachedBuffer)
+        playTrack(playlist[index], cachedBuffer: cachedBuffer, startPlayback: startPlayback)
     }
 
     // MARK: - Overridden Hooks

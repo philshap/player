@@ -82,7 +82,11 @@ struct PlayerView: View {
                         get: { main.currentTime },
                         set: { main.seek(to: $0) }
                     ),
-                    in: 0...max(main.duration, 0.01)
+                    in: 0...max(main.duration, 0.01),
+                    onEditingChanged: { editing in
+                        if editing { main.beginInteractiveSeek() }
+                        else { main.endInteractiveSeek() }
+                    }
                 )
                 .focusable(false)
 
@@ -183,7 +187,11 @@ struct PlayerView: View {
                         get: { preview.currentTime },
                         set: { preview.seek(to: $0) }
                     ),
-                    in: 0...max(preview.duration, 0.01)
+                    in: 0...max(preview.duration, 0.01),
+                    onEditingChanged: { editing in
+                        if editing { preview.beginInteractiveSeek() }
+                        else { preview.endInteractiveSeek() }
+                    }
                 )
                 .focusable(false)
 

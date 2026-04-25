@@ -13,6 +13,9 @@
 import AVFoundation
 import Foundation
 import Observation
+import os.log
+
+private let seekLog = OSLog(subsystem: "com.player", category: "seek")
 
 /// Controls playback on a single player-node + mixer pair.
 ///
@@ -47,6 +50,14 @@ class PlaybackController {
     /// seeks (e.g. slider dragging) skip stale positions instead of queuing.
     /// Must only be accessed from the main thread.
     @ObservationIgnored private var pendingSeek: DispatchWorkItem?
+
+    /// Monotonically increasing counter used to correlate seek log events.
+    @ObservationIgnored private var seekSerial: Int = 0
+
+    /// True while the user is actively dragging a seek slider.
+    /// Intermediate seeks use prepareSeek only; player.play() is deferred to endInteractiveSeek().
+    @ObservationIgnored private(set) var isInteractiveSeeking = false
+    @ObservationIgnored private var interactiveSeekWasPlaying = false
 
     // MARK: - Observable State
 
@@ -134,6 +145,52 @@ class PlaybackController {
         if isPlaying { pause() } else { resume() }
     }
 
+    /// Call when a seek slider drag begins.
+    /// Pauses the player immediately and suppresses all audio-node operations for
+    /// intermediate drag events. endInteractiveSeek() applies the final position once.
+    func beginInteractiveSeek() {
+        guard !isInteractiveSeeking else { return }
+        isInteractiveSeeking = true
+        interactiveSeekWasPlaying = isPlaying
+        if isPlaying {
+            isPlaying = false
+            stopPositionTimer()
+            audioEngine.playerQueue.async { [player] in
+                player.pause()
+            }
+        }
+    }
+
+    /// Call when a seek slider drag ends.
+    /// Applies the final seek position with a single stop+schedule+(play if needed).
+    func endInteractiveSeek() {
+        guard isInteractiveSeeking else { return }
+        isInteractiveSeeking = false
+
+        guard let track = currentTrack else { return }
+        let finalPosition = currentTime
+
+        loadTask?.cancel()
+        loadTask = nil
+        playbackGeneration += 1
+        let gen = playbackGeneration
+        seekFrameOffset = 0
+
+        willStartTrack(track, generation: gen)
+
+        if let fullBuffer = currentFullBuffer {
+            applySlice(from: fullBuffer, track: track, position: finalPosition,
+                       generation: gen, startPlayback: interactiveSeekWasPlaying)
+        } else {
+            loadBuffer(for: track, generation: gen) { [weak self] buffer in
+                guard let self else { return }
+                self.currentFullBuffer = buffer
+                self.applySlice(from: buffer, track: track, position: finalPosition,
+                                generation: gen, startPlayback: self.interactiveSeekWasPlaying)
+            }
+        }
+    }
+
     func pause() {
         guard isPlaying else { return }
         isPlaying = false
@@ -190,12 +247,29 @@ class PlaybackController {
     func seek(to time: TimeInterval) {
         guard let track = currentTrack else { return }
 
+        seekSerial += 1
+        let serial = seekSerial
+
+        let clamped = time.clamped(to: 0...duration)
+
+        if isInteractiveSeeking {
+            // During drag: the player is already paused by beginInteractiveSeek().
+            // Just update the displayed position; endInteractiveSeek() will apply it once.
+            currentTime = clamped
+            os_log("seek #%d  t=%.2f  interactive (deferred)", log: seekLog, type: .debug, serial, clamped)
+            return
+        }
+
+        let wasPlaying = isPlaying
+        let hasCached = currentFullBuffer != nil
+        os_log("seek #%d  t=%.2f  playing=%d  hasCachedBuffer=%d", log: seekLog, type: .debug,
+               serial, time, wasPlaying ? 1 : 0, hasCached ? 1 : 0)
+
         loadTask?.cancel()
         loadTask = nil
         playbackGeneration += 1
         let gen = playbackGeneration
 
-        let clamped = time.clamped(to: 0...duration)
         currentTime = clamped
         isPlaying   = false
         stopPositionTimer()
@@ -203,24 +277,30 @@ class PlaybackController {
         willStartTrack(track, generation: gen)  // give subclasses a chance to cancel prefetch/chain
 
         if let fullBuffer = currentFullBuffer {
-            applySlice(from: fullBuffer, track: track, position: clamped, generation: gen)
+            applySlice(from: fullBuffer, track: track, position: clamped, generation: gen, startPlayback: wasPlaying)
             return
         }
 
         // Slow path: buffer not yet loaded. Load in background, then seek.
+        os_log("seek #%d  slow-path load started", log: seekLog, type: .debug, serial)
         loadBuffer(for: track, generation: gen) { [weak self] buffer in
             guard let self else { return }
+            os_log("seek #%d  slow-path load finished", log: seekLog, type: .debug, serial)
             self.currentFullBuffer = buffer
-            self.applySlice(from: buffer, track: track, position: clamped, generation: gen)
+            // Re-evaluate: if resume() was called while the buffer was loading, honour it.
+            let shouldPlay = wasPlaying || self.isPlaying
+            self.applySlice(from: buffer, track: track, position: clamped, generation: gen, startPlayback: shouldPlay)
         }
     }
 
     // MARK: - Playback Entry Points
 
-    /// Starts playback of `track`. If `cachedBuffer` is non-nil it is used directly
-    /// (fast path for prefetched buffers); otherwise the buffer is loaded
-    /// asynchronously on a background task.
-    func playTrack(_ track: Track, cachedBuffer: AVAudioPCMBuffer? = nil) {
+    /// Starts (or prepares without starting) playback of `track`.
+    /// If `cachedBuffer` is non-nil it is used directly (fast path for prefetched
+    /// buffers); otherwise the buffer is loaded asynchronously on a background task.
+    /// When `startPlayback` is false the track is loaded and parked at position 0 so
+    /// that a subsequent `resume()` begins immediately without reloading.
+    func playTrack(_ track: Track, cachedBuffer: AVAudioPCMBuffer? = nil, startPlayback: Bool = true) {
         loadTask?.cancel()
         loadTask = nil
         playbackGeneration += 1
@@ -234,15 +314,30 @@ class PlaybackController {
         willStartTrack(track, generation: gen)
 
         if let cached = cachedBuffer {
+            // Fast path: buffer already in memory — schedule synchronously.
+            // Only clear the player node when we're not starting playback (avoids
+            // an unnecessary stop/restart in the playing case).
+            if !startPlayback { stopPlayer() }
             currentFullBuffer = cached
-            applySlice(from: cached, track: track, position: 0, generation: gen)
+            applySlice(from: cached, track: track, position: 0, generation: gen, startPlayback: startPlayback)
             return
         }
+
+        // Slow path: buffer must be loaded from disk.
+        // Stop the player node and halt the position timer so the old track's
+        // accumulated time doesn't advance against the new track's duration.
+        // isPlaying is intentionally NOT cleared here — it captures whether the
+        // user wants playback, so next/previousTrack() can read wasPlaying correctly
+        // even when a second navigation arrives while the first track is still loading.
+        stopPlayer()
+        stopPositionTimer()
 
         loadBuffer(for: track, generation: gen) { [weak self] buffer in
             guard let self else { return }
             self.currentFullBuffer = buffer
-            self.applySlice(from: buffer, track: track, position: 0, generation: gen)
+            // Re-evaluate: honour a resume() that arrived while we were loading.
+            let shouldPlay = startPlayback || self.isPlaying
+            self.applySlice(from: buffer, track: track, position: 0, generation: gen, startPlayback: shouldPlay)
         }
     }
 
@@ -305,12 +400,32 @@ class PlaybackController {
     /// seeks (e.g. slider dragging) skip stale positions instead of queuing up.
     /// The buffer must already be sliced to start at the desired frame — no disk I/O.
     func scheduleSeek(_ buffer: AVAudioPCMBuffer, completion: (() -> Void)? = nil) throws {
+        let hadPending = pendingSeek != nil
         pendingSeek?.cancel()
+        seekSerial += 1
+        let serial = seekSerial
+        os_log("scheduleSeek #%d  cancelledPrevious=%d", log: seekLog, type: .debug, serial, hadPending ? 1 : 0)
         try audioEngine.ensureRunning()
-        let item = DispatchWorkItem { [player] in
+        var item: DispatchWorkItem!
+        item = DispatchWorkItem { [player] in
+            guard !item.isCancelled else {
+                os_log("scheduleSeek #%d  skipped (cancelled)", log: seekLog, type: .debug, serial)
+                return
+            }
+            let t0 = CACurrentMediaTime()
+            os_log("scheduleSeek #%d  executing  stop…", log: seekLog, type: .debug, serial)
             player.stop()
+            let stopMs = Int((CACurrentMediaTime() - t0) * 1000)
+            os_log("scheduleSeek #%d  stop took %dms  scheduling…", log: seekLog, type: .debug, serial, stopMs)
             Self.schedule(buffer, on: player, completion: completion)
+            // A newer seek may have arrived while we were stopping. If so, skip play() —
+            // the next item will stop() an idle player (fast) rather than a running one (slow).
+            guard !item.isCancelled else {
+                os_log("scheduleSeek #%d  skipping play (cancelled after stop)", log: seekLog, type: .debug, serial)
+                return
+            }
             player.play()
+            os_log("scheduleSeek #%d  done", log: seekLog, type: .debug, serial)
         }
         pendingSeek = item
         audioEngine.playerQueue.async(execute: item)
@@ -318,14 +433,35 @@ class PlaybackController {
 
     /// Schedules `buffer` on the player without starting playback.
     /// Call `resume()` afterwards to begin playing from the prepared position.
-    func prepareSeek(_ buffer: AVAudioPCMBuffer) throws {
+    ///
+    /// Uses the same `pendingSeek` cancellation mechanism as `scheduleSeek`, so rapid
+    /// paused-seek events cancel earlier items rather than piling up on the audio queue.
+    /// Unlike `scheduleSeek` this does NOT call `player.play()`, which avoids the
+    /// play→pause round-trip that can stall the serial player queue for render-cycle
+    /// intervals (10–90 ms each) when many events arrive in quick succession.
+    func prepareSeek(_ buffer: AVAudioPCMBuffer, completion: (() -> Void)? = nil) throws {
+        let hadPending = pendingSeek != nil
         pendingSeek?.cancel()
-        pendingSeek = nil
+        seekSerial += 1
+        let serial = seekSerial
+        os_log("prepareSeek #%d  cancelledPrevious=%d", log: seekLog, type: .debug, serial, hadPending ? 1 : 0)
         try audioEngine.ensureRunning()
-        audioEngine.playerQueue.async { [player] in
+        var item: DispatchWorkItem!
+        item = DispatchWorkItem { [player] in
+            guard !item.isCancelled else {
+                os_log("prepareSeek #%d  skipped (cancelled)", log: seekLog, type: .debug, serial)
+                return
+            }
+            let t0 = CACurrentMediaTime()
+            os_log("prepareSeek #%d  executing  stop…", log: seekLog, type: .debug, serial)
             player.stop()
-            player.scheduleBuffer(buffer)
+            let stopMs = Int((CACurrentMediaTime() - t0) * 1000)
+            os_log("prepareSeek #%d  stop took %dms  scheduling…", log: seekLog, type: .debug, serial, stopMs)
+            Self.schedule(buffer, on: player, completion: completion)
+            os_log("prepareSeek #%d  done", log: seekLog, type: .debug, serial)
         }
+        pendingSeek = item
+        audioEngine.playerQueue.async(execute: item)
     }
 
     // MARK: - Position / Sample-Rate Queries
@@ -358,11 +494,13 @@ class PlaybackController {
     // MARK: - Slicing & Scheduling
 
     /// Slices `fullBuffer` starting at `position` (seconds relative to cue-in) through
-    /// cue-out, schedules it on the player, and starts playback.
+    /// cue-out, then either starts playback immediately (`startPlayback: true`) or
+    /// parks the buffer at that position so `resume()` can begin without reloading.
     private func applySlice(from fullBuffer: AVAudioPCMBuffer,
                             track: Track,
                             position: TimeInterval,
-                            generation gen: Int) {
+                            generation gen: Int,
+                            startPlayback: Bool = true) {
         let sampleRate    = sampleRate()
         let cueInFrame    = effectiveStartFrame(for: track, sampleRate: sampleRate)
         let cueOutFrame   = effectiveEndFrame(for: track, sampleRate: sampleRate)
@@ -385,11 +523,18 @@ class PlaybackController {
         guard let buffer = slice else { return }
 
         do {
-            try scheduleSeek(buffer) { [weak self] in
-                self?.handleTrackCompletion(generation: gen)
+            if startPlayback {
+                try scheduleSeek(buffer) { [weak self] in
+                    self?.handleTrackCompletion(generation: gen)
+                }
+                isPlaying = true
+                startPositionTimer()
+            } else {
+                try prepareSeek(buffer) { [weak self] in
+                    self?.handleTrackCompletion(generation: gen)
+                }
+                isPlaying = false
             }
-            isPlaying = true
-            startPositionTimer()
             didStartTrack(track, generation: gen)
         } catch {
             print("\(type(of: self)): schedule error — \(error.localizedDescription)")
