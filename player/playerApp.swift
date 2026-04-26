@@ -16,18 +16,28 @@ struct playerApp: App {
         // Library window — the main/default window
         Window("Library", id: "library") {
             libraryContent
+                .background(WindowAutosaver(name: "player-window-library"))
         }
+        .restorationBehavior(.automatic)
 
         // Player window — now playing + preview controls
         Window("Player", id: "player") {
             playerContent
+                .background(WindowAutosaver(name: "player-window-player"))
         }
         .defaultSize(width: 500, height: 300)
+        .restorationBehavior(.automatic)
 
         // Playlist windows — one per playlist, opened by PersistentIdentifier
         WindowGroup("Playlist", id: "playlist", for: String.self) { $playlistID in
-            playlistContent(playlistID: playlistID)
+            if let playlistID {
+                playlistContent(playlistID: playlistID)
+                    .background(WindowAutosaver(name: "player-window-playlist-\(playlistID)"))
+            } else {
+                EmptyView()
+            }
         }
+        .restorationBehavior(.disabled)
 
         .commands {
             // Window commands
@@ -143,7 +153,7 @@ struct playerApp: App {
     }
 
     @ViewBuilder
-    private func playlistContent(playlistID: String?) -> some View {
+    private func playlistContent(playlistID: String) -> some View {
         if let container = appState.modelContainer {
             PlaylistWindowView(playlistID: playlistID)
                 .environment(appState)

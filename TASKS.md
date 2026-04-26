@@ -7,8 +7,6 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 
 ### Misc bugs / features
 
-- opened playlists windows remember their size/position across app restart but a closed playlist doesn't remember its size/position when re-opened
-
 ### Code cleanups
 
 - find out if we really need playlist entry sortOrder, if playlist entries are always in sort order. Right now the code

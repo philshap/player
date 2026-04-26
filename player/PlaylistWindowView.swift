@@ -8,7 +8,7 @@ import SwiftData
 import UniformTypeIdentifiers
 
 struct PlaylistWindowView: View {
-    let playlistID: String?
+    let playlistID: String
     @Environment(AppState.self) private var appState
     @Environment(\.modelContext) private var modelContext
     @Query private var playlists: [Playlist]
@@ -21,8 +21,7 @@ struct PlaylistWindowView: View {
     @State private var selectedTrackID: Track.ID?
 
     private var playlist: Playlist? {
-        guard let playlistID,
-              let uuid = UUID(uuidString: playlistID) else { return nil }
+        guard let uuid = UUID(uuidString: playlistID) else { return nil }
         return playlists.first { $0.id == uuid }
     }
 
