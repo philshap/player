@@ -28,6 +28,7 @@
 		4A1B58E22F85B91800276FDB /* playerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = playerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4A1B58EC2F85B91800276FDB /* playerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = playerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4A9F1A032F85B91700276FDB /* ci.yml */ = {isa = PBXFileReference; lastKnownFileType = text.yaml; path = ci.yml; sourceTree = "<group>"; };
+		4AB737D72F9E44C3005692EF /* CLAUDE.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = CLAUDE.md; sourceTree = "<group>"; };
 		4AC554C52F8D9E2500723199 /* PORTABLE-LIBRARY.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "PORTABLE-LIBRARY.md"; sourceTree = "<group>"; };
 		4AD05B6A2F8ABF0E00816D85 /* SPEC.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = SPEC.md; sourceTree = "<group>"; };
 		4AD05B6B2F8ABF0E00816D85 /* TASKS.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = TASKS.md; sourceTree = "<group>"; };
@@ -80,6 +81,7 @@
 			isa = PBXGroup;
 			children = (
 				4AD05B6A2F8ABF0E00816D85 /* SPEC.md */,
+				4AB737D72F9E44C3005692EF /* CLAUDE.md */,
 				4AD05B6B2F8ABF0E00816D85 /* TASKS.md */,
 				4A1B58D72F85B91700276FDB /* player */,
 				4A1B58E52F85B91800276FDB /* playerTests */,

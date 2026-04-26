@@ -36,7 +36,7 @@ The SwiftData `ModelContainer` and `libraryFolderURL` live in `AppState` and are
 
 ```
 PlaybackController          (base: single-track buffer playback, seek, position timer)
-├── MainPlaybackController  (adds: playlist, prefetch/chain, inter-track gap, play counts)
+├── MainPlaybackController  (adds: playlist, prefetch, inter-track gap, play counts)
 └── PreviewPlaybackController (adds: bypassCuePoints, unload())
 ```
 
@@ -59,13 +59,11 @@ All player-node operations (stop, play, scheduleBuffer) are dispatched to a seri
 
 Every `PlaybackController` has an `Int` property `playbackGeneration` that increments on every play, seek, and stop. Async callbacks (buffer load completions, AVAudioPlayerNode completion handlers) capture the generation at dispatch time and are no-ops if `self.playbackGeneration != capturedGeneration` when they fire. This prevents stale completions from corrupting state during rapid navigation.
 
-### Gapless Chaining
+### Pre-fetch
 
-When a track starts playing, `MainPlaybackController.didStartTrack` immediately kicks off `prefetchAndChain(nextIndex:generation:)` on a background Task. Once the next track's buffer is loaded, it is appended to the player node's buffer queue via `chain(_:completion:)` — **without stopping the player**. The `onTrackCompletion` handler fires for both the current track and the chained successor; `transitionToChained` handles the state bookkeeping when the chained buffer's completion fires.
+When a track starts playing, `MainPlaybackController.didStartTrack` immediately kicks off `prefetchNext(index:generation:)` on a background Task. Once the next track's buffer is loaded it is stored in `preloadedBuffer`. When auto-advance fires, `playTrack(at:)` claims the buffer and schedules it directly — no disk read at the track boundary.
 
-The player node's accumulated sample counter is never reset across a chain transition. `seekTimeOffset` is set to `-currentPosition` at transition time so that `updatePosition()` computes time relative to the chained track's start.
-
-If a gap is configured (`gapDuration > 0`), chaining is suppressed and a repeating `Timer` handles the countdown before advancing.
+If a gap is configured (`gapDuration > 0`), a repeating `Timer` handles the countdown before advancing.
 
 ### Portable Library
 

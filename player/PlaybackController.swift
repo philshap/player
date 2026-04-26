@@ -7,7 +7,7 @@
 //
 //  Subclassed by:
 //    - PreviewPlaybackController — adds bypassCuePoints, unload.
-//    - MainPlaybackController    — adds playlist, prefetch/chain, gap, play counts.
+//    - MainPlaybackController    — adds playlist, prefetch, gap, play counts.
 //
 
 @preconcurrency import AVFoundation
@@ -63,8 +63,8 @@ class PlaybackController {
 
     // Writable at module-internal scope so subclasses in other files can update them
     // (e.g. PreviewPlaybackController recomputes `duration` when cue-point bypass toggles,
-    // MainPlaybackController mutates state during playlist transitions and chained
-    // track hand-offs). External callers should treat these as read-only.
+    // MainPlaybackController mutates state during playlist transitions).
+    // External callers should treat these as read-only.
     var currentTrack: Track?
     var isPlaying:    Bool         = false
     var currentTime:  TimeInterval = 0
@@ -131,7 +131,7 @@ class PlaybackController {
     /// only act if `self.playbackGeneration == generation`.
     ///
     /// Default behavior: stop playback. Subclasses (MainPlaybackController) override
-    /// to auto-advance the playlist or transition to a chained next track.
+    /// to auto-advance the playlist.
     func onTrackCompletion(generation: Int) {
         guard playbackGeneration == generation else { return }
         isPlaying = false
@@ -139,7 +139,7 @@ class PlaybackController {
     }
 
     /// Called immediately before `playTrack` starts loading/scheduling a new track.
-    /// Subclasses hook this to cancel pending work (prefetch, chain, gap).
+    /// Subclasses hook this to cancel pending work (prefetch, gap).
     func willStartTrack(_ track: Track, generation: Int) {}
 
     /// Called on the main thread immediately after a new track's slice has been
@@ -376,16 +376,6 @@ class PlaybackController {
         audioEngine.playerQueue.async { [player] in
             player.stop()
         }
-    }
-
-    /// Appends `buffer` to the player's queue WITHOUT stopping.
-    /// The buffer plays seamlessly immediately after all currently-queued content.
-    /// Call this while a track is already playing to achieve zero-gap transitions.
-    func chain(_ buffer: AVAudioPCMBuffer, completion: @escaping () -> Void) {
-        audioEngine.playerQueue.async { [player] in
-            Self.schedule(buffer, on: player, completion: completion)
-        }
-        // Do NOT call stop() or play() — the player is already running.
     }
 
     /// Schedules a pre-sliced buffer for seek playback.

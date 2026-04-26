@@ -14,8 +14,7 @@ import Observation
 /// re-establish their graph connections with the new format.
 ///
 /// All playback is buffer-based (files pre-loaded into `AVAudioPCMBuffer`) to
-/// eliminate disk I/O on the audio render thread and enable seamless gapless
-/// chaining between tracks.
+/// eliminate disk I/O on the audio render thread.
 @Observable
 final class AudioEngineManager {
 

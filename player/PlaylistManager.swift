@@ -68,6 +68,10 @@ final class PlaylistManager {
         }
 
         playlist.dateModified = Date()
+        // Save before notifying so that observers see a fully consistent model —
+        // modelContext.delete() marks the entry for deletion but doesn't remove it
+        // from the playlist.entries relationship until the context is saved.
+        try? modelContext.save()
         notify(playlist)
     }
 

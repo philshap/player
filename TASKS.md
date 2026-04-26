@@ -7,6 +7,10 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 
 ### Misc bugs / features
 
+- bind the edit metadata sheet to Command-I
+- add Next and Prev buttons to edit metadata that traverse the currently selected tracks. Support command-N for next and Command-P for previous
+- opened playlists windows remember their size/position across app restart but a closed playlist doesn't remember its size/position when re-opened
+
 ---
 
 ## Medium Priority / Medium Difficulty

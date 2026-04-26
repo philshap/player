@@ -28,7 +28,7 @@ A DJ-oriented audio player for macOS (iOS later) focused on playlist curation an
 - The main output plays the current playlist sequentially
 - Playback controls: play, pause, stop, next track, previous track, seek, restart track
 - Tracks transition sequentially with configurable inter-track gap (0/1/2/3/5 seconds) and a countdown/skip UI
-- Gapless chaining: next track pre-loaded into memory and appended to the audio queue for zero-gap transitions when no gap is configured
+- Next track pre-buffered in memory during playback so that auto-advance is instant (no disk read at the track boundary)
 
 ### Track Preview (Cue/Headphone Monitor)
 - While a playlist is playing on the main output, the user can preview/cue any track from the library or a playlist
@@ -98,7 +98,7 @@ The primary concern is preventing accidental modifications during live playback 
 - Built on AVFoundation / AVAudioEngine
 - Two AVAudioPlayerNodes: one for main output, one for preview
 - All audio pre-decoded to in-memory AVAudioPCMBuffer before scheduling; eliminates disk I/O on the render thread
-- Next track pre-buffered in the background before auto-advance for seamless transitions
+- Next track pre-buffered in the background during playback; auto-advance schedules the buffer directly without a disk read
 - Mono mixdown of both signals; channel routing enforced by buffer content (not pan)
 - Channel routing: main → left (or both), preview → right (or both)
 - Output through system default audio device
