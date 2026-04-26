@@ -3,33 +3,31 @@
 //  player
 //
 
-import AppKit
 import SwiftUI
 
 struct PlayerView: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Main Playback Section
-            mainPlaybackSection
-                .padding()
+        NavigationStack {
+            VStack(spacing: 0) {
+                // Main Playback Section
+                mainPlaybackSection
+                    .padding()
 
-            Divider()
+                Divider()
 
-            // Preview/Cue Section
-            previewSection
-                .padding()
+                // Preview/Cue Section
+                previewSection
+                    .padding()
+            }
+            .frame(minWidth: 500, minHeight: 300)
+            .navigationTitle(playerWindowTitle)
         }
-        .frame(minWidth: 500, minHeight: 300)
-        .background(
-            WindowTitleUpdater(title: playerWindowTitle)
-                .frame(width: 0, height: 0)
-        )
     }
 
     private var playerWindowTitle: String {
-        appState.isPerformanceMode ? "Player - Performance 🔒" : "Player"
+        appState.isPerformanceMode ? "Player - Performance" : "Player"
     }
 
     // MARK: - Main Playback Section
@@ -314,20 +312,3 @@ struct PlayerView: View {
 
 }
 
-private struct WindowTitleUpdater: NSViewRepresentable {
-    let title: String
-
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView(frame: .zero)
-        DispatchQueue.main.async {
-            view.window?.title = title
-        }
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async {
-            nsView.window?.title = title
-        }
-    }
-}

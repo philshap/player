@@ -15,6 +15,14 @@ final class PlaylistManager {
 
     // MARK: - Playlist CRUD
 
+    func uniquePlaylistName(base: String, among playlists: [Playlist]) -> String {
+        let names = Set(playlists.map(\.name))
+        if !names.contains(base) { return base }
+        var counter = 1
+        while names.contains("\(base) \(counter)") { counter += 1 }
+        return "\(base) \(counter)"
+    }
+
     @discardableResult
     func createPlaylist(name: String, modelContext: ModelContext) -> Playlist {
         let playlist = Playlist(name: name)

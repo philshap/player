@@ -60,6 +60,16 @@ struct PlaylistWindowView: View {
                             systemImage: "music.note",
                             description: Text("Drag from Library to add tracks.")
                         )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .dropDestination(for: String.self) { droppedStrings, _ in
+                            let trackIDs = droppedStrings.flatMap { TrackTransfer.decode($0) }
+                            let allTracks = (try? modelContext.fetch(FetchDescriptor<Track>())) ?? []
+                            let droppedTracks = allTracks.filter { trackIDs.contains($0.id) }
+                            for track in droppedTracks {
+                                appState.playlistManager.addTrack(track, to: playlist, modelContext: modelContext)
+                            }
+                            return !droppedTracks.isEmpty
+                        }
                     } else {
                         trackList(tracks, playlist: playlist)
                     }
@@ -284,8 +294,23 @@ private struct PerformanceControlsView: View {
         let main = appState.mainPlayback
 
         VStack(spacing: 6) {
-            if let track = main.currentTrack {
-                TrackInfoView(track: track, artworkSize: 40, titleFont: .headline)
+            HStack(alignment: .top, spacing: 12) {
+                if let track = main.currentTrack {
+                    TrackInfoView(track: track, artworkSize: 40, titleFont: .headline)
+                }
+                Spacer()
+                if let next = nextTrack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Up Next")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.secondary)
+                        TrackInfoView(track: next, artworkSize: 28, titleFont: .subheadline)
+                    }
+                    .padding(6)
+                    .background(Color.secondary.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
             }
 
             HStack(spacing: 6) {
@@ -371,6 +396,15 @@ private struct PerformanceControlsView: View {
         .padding(.horizontal)
         .padding(.vertical, 8)
         .background(.orange.opacity(0.08))
+    }
+
+    private var nextTrack: Track? {
+        let main = appState.mainPlayback
+        guard !main.playlist.isEmpty else { return nil }
+        if main.currentTrack == nil { return main.playlist.first }
+        let nextIndex = main.currentTrackIndex + 1
+        guard nextIndex >= 0, nextIndex < main.playlist.count else { return nil }
+        return main.playlist[nextIndex]
     }
 
 }

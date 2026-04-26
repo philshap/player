@@ -288,7 +288,8 @@ struct LibraryView: View {
 
                 if !appState.isPerformanceMode {
                     Button {
-                        let playlist = appState.playlistManager.createPlaylist(name: "New Playlist", modelContext: modelContext)
+                        let name = appState.playlistManager.uniquePlaylistName(base: "New Playlist", among: playlists)
+                        let playlist = appState.playlistManager.createPlaylist(name: name, modelContext: modelContext)
                         openWindow(id: "playlist", value: playlist.id.uuidString)
                     } label: {
                         Label("New Playlist", systemImage: "plus")
@@ -299,9 +300,10 @@ struct LibraryView: View {
                         let trackIDs = droppedStrings.flatMap { TrackTransfer.decode($0) }
                         let droppedTracks = tracks.filter { trackIDs.contains($0.id) }
                         guard !droppedTracks.isEmpty else { return false }
-                        let name = droppedTracks.count == 1
+                        let baseName = droppedTracks.count == 1
                             ? droppedTracks[0].title
                             : "New Playlist"
+                        let name = appState.playlistManager.uniquePlaylistName(base: baseName, among: playlists)
                         let playlist = appState.playlistManager.createPlaylist(name: name, modelContext: modelContext)
                         for track in droppedTracks {
                             appState.playlistManager.addTrack(track, to: playlist, modelContext: modelContext)
