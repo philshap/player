@@ -1,3 +1,5 @@
 .derived-data-log*
-DerivedData
+DerivedData/
 xcuserdata/
+.claude/
+*~
