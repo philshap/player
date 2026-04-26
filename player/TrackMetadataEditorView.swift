@@ -6,14 +6,18 @@
 import SwiftUI
 
 /// Modal sheet for editing a track's metadata fields.
-/// Edits are applied only when the user confirms; Cancel discards all changes.
+/// Accepts one or more tracks; when multiple tracks are provided, Prev/Next
+/// buttons (and Command-P / Command-N) let the user traverse them.
+/// Edits are applied to the current track when navigating or when Save is pressed;
+/// Cancel on the last track discards only that track's unsaved changes.
 struct TrackMetadataEditorView: View {
 
-    let track: Track
+    let tracks: [Track]
     var onDismiss: () -> Void
 
     // MARK: - Editable fields
 
+    @State private var currentIndex: Int
     @State private var title: String
     @State private var artist: String
     @State private var album: String
@@ -24,16 +28,26 @@ struct TrackMetadataEditorView: View {
 
     @State private var confirmResetPlayCount = false
 
+    @FocusState private var titleFocused: Bool
+
     // MARK: - Init
 
-    init(track: Track, onDismiss: @escaping () -> Void) {
-        self.track = track
+    init(tracks: [Track], startIndex: Int = 0, onDismiss: @escaping () -> Void) {
+        precondition(!tracks.isEmpty)
+        self.tracks = tracks
         self.onDismiss = onDismiss
-        _title   = State(initialValue: track.title)
-        _artist  = State(initialValue: track.artist)
-        _album   = State(initialValue: track.album)
-        _bpmText = State(initialValue: track.bpm.map { String(format: "%.0f", $0) } ?? "")
+        let index = tracks.indices.contains(startIndex) ? startIndex : 0
+        _currentIndex = State(initialValue: index)
+        _title   = State(initialValue: tracks[index].title)
+        _artist  = State(initialValue: tracks[index].artist)
+        _album   = State(initialValue: tracks[index].album)
+        _bpmText = State(initialValue: tracks[index].bpm.map { String(format: "%.0f", $0) } ?? "")
     }
+
+    // MARK: - Convenience
+
+    private var track: Track { tracks[currentIndex] }
+    private var isMultiple: Bool { tracks.count > 1 }
 
     // MARK: - Body
 
@@ -51,6 +65,36 @@ struct TrackMetadataEditorView: View {
                         .lineLimit(1)
                 }
                 Spacer()
+                if isMultiple {
+                    HStack(spacing: 6) {
+                        Button {
+                            navigateTo(currentIndex - 1)
+                        } label: {
+                            Image(systemName: "chevron.left")
+                        }
+                        .buttonStyle(.borderless)
+                        .focusable(false)
+                        .disabled(currentIndex == 0)
+                        .keyboardShortcut(currentIndex > 0 ? KeyEquivalent("p") : KeyEquivalent("\0"), modifiers: .command)
+                        .help("Previous track (⌘P)")
+
+                        Text("\(currentIndex + 1) of \(tracks.count)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+
+                        Button {
+                            navigateTo(currentIndex + 1)
+                        } label: {
+                            Image(systemName: "chevron.right")
+                        }
+                        .buttonStyle(.borderless)
+                        .focusable(false)
+                        .disabled(currentIndex == tracks.count - 1)
+                        .keyboardShortcut(currentIndex < tracks.count - 1 ? KeyEquivalent("n") : KeyEquivalent("\0"), modifiers: .command)
+                        .help("Next track (⌘N)")
+                    }
+                }
             }
             .padding()
 
@@ -62,6 +106,7 @@ struct TrackMetadataEditorView: View {
                     TextField("Title", text: $title)
                         .textFieldStyle(.plain)
                         .multilineTextAlignment(.trailing)
+                        .focused($titleFocused)
                     TextField("Artist", text: $artist)
                         .textFieldStyle(.plain)
                         .multilineTextAlignment(.trailing)
@@ -158,6 +203,7 @@ struct TrackMetadataEditorView: View {
             .padding()
         }
         .frame(width: 440)
+        .onAppear { titleFocused = true }
         .confirmationDialog(
             "Reset Play Count",
             isPresented: $confirmResetPlayCount,
@@ -171,6 +217,21 @@ struct TrackMetadataEditorView: View {
         } message: {
             Text("This will clear the play count and last-played date for \"\(track.title)\".")
         }
+    }
+
+    // MARK: - Navigation
+
+    private func navigateTo(_ index: Int) {
+        guard tracks.indices.contains(index) else { return }
+        applyEdits()
+        currentIndex = index
+        title   = track.title
+        artist  = track.artist
+        album   = track.album
+        bpmText = track.bpm.map { String(format: "%.0f", $0) } ?? ""
+        bpmError = false
+        titleFocused = false
+        Task { @MainActor in titleFocused = true }
     }
 
     // MARK: - Helpers
@@ -191,8 +252,7 @@ struct TrackMetadataEditorView: View {
         } else if let bpm = parsedBPM {
             track.bpm = bpm
         }
-        // cue clears are applied live (directly on the track above)
-        // play count reset is applied live too
+        // cue clears and play count resets are applied live (directly on the track)
     }
 
 }

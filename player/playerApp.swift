@@ -40,7 +40,7 @@ struct playerApp: App {
                 Button("Open Player") {
                     openWindow(id: "player")
                 }
-                .keyboardShortcut("P", modifiers: [.command])
+                .keyboardShortcut("P", modifiers: [.command, .option])
 
                 Divider()
 

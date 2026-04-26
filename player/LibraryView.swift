@@ -152,7 +152,7 @@ struct LibraryView: View {
     @State private var displayedRows: [TrackRow] = []
     /// Incremented on sort/filter changes to force Table recreation instead of diffing 500 rows.
     @State private var tableGeneration: Int = 0
-    @State private var editingTrack: Track? = nil
+    @State private var editingTracks: [Track] = []
     @State private var diskSpaceFree: String = ""
     @State private var showUnmigratedAlert = false
     @State private var pendingAppleMusicURLs: [URL] = []
@@ -165,6 +165,12 @@ struct LibraryView: View {
         } detail: {
             trackTable
         }
+        .background(
+            Button("", action: editMetadataForSelection)
+                .keyboardShortcut("i", modifiers: .command)
+                .opacity(0)
+                .allowsHitTesting(false)
+        )
         .searchable(text: $searchText, prompt: "Search by title, artist, or album")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -219,9 +225,12 @@ struct LibraryView: View {
         .onChange(of: tracks.map(\.lastPlayedDate)) { recomputeAllRows(resetScroll: false) }
         .onChange(of: searchText) { recomputeFilteredRows(resetScroll: false) }
         .onChange(of: sortOrder) { recomputeFilteredRows() }
-        .sheet(item: $editingTrack) { track in
-            TrackMetadataEditorView(track: track) {
-                editingTrack = nil
+        .sheet(isPresented: Binding(
+            get: { !editingTracks.isEmpty },
+            set: { if !$0 { editingTracks = [] } }
+        )) {
+            TrackMetadataEditorView(tracks: editingTracks) {
+                editingTracks = []
                 recomputeAllRows(resetScroll: false)
             }
         }
@@ -452,8 +461,11 @@ struct LibraryView: View {
                 Divider()
 
                 Button("Edit Metadata…") {
-                    editingTrack = firstTrack
+                    editingTracks = displayedRows
+                        .filter { selectedIDs.contains($0.id) }
+                        .compactMap { row in tracks.first { $0.id == row.id } }
                 }
+                .keyboardShortcut("i", modifiers: .command)
 
                 Button("Detect BPM") {
                     Task {
@@ -509,6 +521,14 @@ struct LibraryView: View {
     }
 
     // MARK: - Actions
+
+    private func editMetadataForSelection() {
+        let ordered = displayedRows
+            .filter { selectedTrackIDs.contains($0.id) }
+            .compactMap { row in tracks.first { $0.id == row.id } }
+        guard !ordered.isEmpty else { return }
+        editingTracks = ordered
+    }
 
     private func updateTrackRating(id: UUID, rating: Int) {
         guard let track = tracks.first(where: { $0.id == id }) else { return }

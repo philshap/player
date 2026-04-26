@@ -7,9 +7,12 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 
 ### Misc bugs / features
 
-- bind the edit metadata sheet to Command-I
-- add Next and Prev buttons to edit metadata that traverse the currently selected tracks. Support command-N for next and Command-P for previous
 - opened playlists windows remember their size/position across app restart but a closed playlist doesn't remember its size/position when re-opened
+
+### Code cleanups
+
+- find out if we really need playlist entry sortOrder, if playlist entries are always in sort order. Right now the code
+  sorts the entries in a few different places, which wouldn't be needed if the list was always in sort order.
 
 ---
 
@@ -17,12 +20,6 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 
 ### Audio Level Display
 - Using bar graph or analog-style VU meter, show audio playback level for both playback channels
-
-### Waveform Display
-- Render audio waveform for current track in performance controls
-- Show playback position on waveform
-- Could replace or augment the seek slider
-- Requires reading audio samples, downsampling, and custom Canvas/Path rendering
 
 ### External Soundcard Support
 - Route main and preview to specific audio output devices
