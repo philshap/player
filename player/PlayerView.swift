@@ -7,6 +7,7 @@ import SwiftUI
 
 struct PlayerView: View {
     @Environment(AppState.self) private var appState
+    @AppStorage("waveformEnabled") private var waveformEnabled = false
 
     var body: some View {
         NavigationStack {
@@ -46,6 +47,16 @@ struct PlayerView: View {
                       systemImage: "speaker.wave.2.fill")
                     .font(.headline)
                 Spacer()
+                Button {
+                    waveformEnabled.toggle()
+                } label: {
+                    Image(systemName: "waveform")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .focusable(false)
+                .foregroundStyle(waveformEnabled ? Color.accentColor : Color.secondary)
+                .help(waveformEnabled ? "Switch to slider seek" : "Switch to waveform seek")
                 Button {
                     main.outputChannel = isStereo ? .left : .both
                 } label: {
@@ -91,18 +102,29 @@ struct PlayerView: View {
                     .monospacedDigit()
                     .frame(width: 50, alignment: .trailing)
 
-                Slider(
-                    value: Binding(
-                        get: { main.currentTime },
-                        set: { main.seek(to: $0) }
-                    ),
-                    in: 0...max(main.duration, 0.01),
-                    onEditingChanged: { editing in
-                        if editing { main.beginInteractiveSeek() }
-                        else { main.endInteractiveSeek() }
-                    }
-                )
-                .focusable(false)
+                if waveformEnabled {
+                    WaveformSeekBar(
+                        waveformData: main.waveformData,
+                        currentTime: main.currentTime,
+                        duration: max(main.duration, 0.01),
+                        onBeginSeek: { main.beginInteractiveSeek() },
+                        onSeek: { main.seek(to: $0) },
+                        onEndSeek: { main.endInteractiveSeek() }
+                    )
+                } else {
+                    Slider(
+                        value: Binding(
+                            get: { main.currentTime },
+                            set: { main.seek(to: $0) }
+                        ),
+                        in: 0...max(main.duration, 0.01),
+                        onEditingChanged: { editing in
+                            if editing { main.beginInteractiveSeek() }
+                            else { main.endInteractiveSeek() }
+                        }
+                    )
+                    .focusable(false)
+                }
 
                 Text(main.duration.mmss())
                     .font(.caption)
@@ -246,18 +268,29 @@ struct PlayerView: View {
                     .monospacedDigit()
                     .frame(width: 50, alignment: .trailing)
 
-                Slider(
-                    value: Binding(
-                        get: { preview.currentTime },
-                        set: { preview.seek(to: $0) }
-                    ),
-                    in: 0...max(preview.duration, 0.01),
-                    onEditingChanged: { editing in
-                        if editing { preview.beginInteractiveSeek() }
-                        else { preview.endInteractiveSeek() }
-                    }
-                )
-                .focusable(false)
+                if waveformEnabled {
+                    WaveformSeekBar(
+                        waveformData: preview.waveformData,
+                        currentTime: preview.currentTime,
+                        duration: max(preview.duration, 0.01),
+                        onBeginSeek: { preview.beginInteractiveSeek() },
+                        onSeek: { preview.seek(to: $0) },
+                        onEndSeek: { preview.endInteractiveSeek() }
+                    )
+                } else {
+                    Slider(
+                        value: Binding(
+                            get: { preview.currentTime },
+                            set: { preview.seek(to: $0) }
+                        ),
+                        in: 0...max(preview.duration, 0.01),
+                        onEditingChanged: { editing in
+                            if editing { preview.beginInteractiveSeek() }
+                            else { preview.endInteractiveSeek() }
+                        }
+                    )
+                    .focusable(false)
+                }
 
                 Text(preview.duration.mmss())
                     .font(.caption)

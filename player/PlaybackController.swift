@@ -10,7 +10,7 @@
 //    - MainPlaybackController    — adds playlist, prefetch/chain, gap, play counts.
 //
 
-import AVFoundation
+@preconcurrency import AVFoundation
 import Foundation
 import Observation
 import os.log
@@ -99,6 +99,13 @@ class PlaybackController {
     /// Incremented on every play/seek/stop so stale completion callbacks are discarded.
     @ObservationIgnored var playbackGeneration: Int = 0
 
+    // MARK: - Waveform
+
+    /// Peak-amplitude data for the currently loaded track, set asynchronously after the buffer loads.
+    var waveformData: WaveformData?
+
+    @ObservationIgnored private var waveformGeneration: Int = 0
+
     // MARK: - Init
 
     init(audioEngine: AudioEngineManager,
@@ -185,6 +192,7 @@ class PlaybackController {
             loadBuffer(for: track, generation: gen) { [weak self] buffer in
                 guard let self else { return }
                 self.currentFullBuffer = buffer
+                if self.waveformData == nil { self.triggerWaveformAnalysis(buffer: buffer, track: track) }
                 self.applySlice(from: buffer, track: track, position: finalPosition,
                                 generation: gen, startPlayback: self.interactiveSeekWasPlaying)
             }
@@ -241,6 +249,7 @@ class PlaybackController {
         currentTime       = 0
         duration          = 0
         seekTimeOffset   = 0
+        waveformData      = nil
         stopPositionTimer()
     }
 
@@ -280,6 +289,7 @@ class PlaybackController {
         loadBuffer(for: track, generation: gen) { [weak self] buffer in
             guard let self else { return }
             self.currentFullBuffer = buffer
+            if self.waveformData == nil { self.triggerWaveformAnalysis(buffer: buffer, track: track) }
             // Re-evaluate: if resume() was called while the buffer was loading, honour it.
             let shouldPlay = wasPlaying || self.isPlaying
             self.applySlice(from: buffer, track: track, position: clamped, generation: gen, startPlayback: shouldPlay)
@@ -303,6 +313,7 @@ class PlaybackController {
         currentTrack    = track
         duration        = effectiveDuration(for: track)
         currentTime     = 0
+        waveformData    = nil
 
         willStartTrack(track, generation: gen)
 
@@ -312,6 +323,7 @@ class PlaybackController {
             // an unnecessary stop/restart in the playing case).
             if !startPlayback { stopPlayer() }
             currentFullBuffer = cached
+            triggerWaveformAnalysis(buffer: cached, track: track)
             applySlice(from: cached, track: track, position: 0, generation: gen, startPlayback: startPlayback)
             return
         }
@@ -332,6 +344,7 @@ class PlaybackController {
         loadBuffer(for: track, generation: gen) { [weak self] buffer in
             guard let self else { return }
             self.currentFullBuffer = buffer
+            if self.waveformData == nil { self.triggerWaveformAnalysis(buffer: buffer, track: track) }
             // Re-evaluate: honour a resume() that arrived while we were loading.
             let shouldPlay = startPlayback || self.isPlaying
             self.applySlice(from: buffer, track: track, position: 0, generation: gen, startPlayback: shouldPlay)
@@ -590,6 +603,35 @@ class PlaybackController {
         } else if !player.isPlaying {
             // Engine stopped unexpectedly (e.g. audio device removed). Reflect that.
             isPlaying = false
+        }
+    }
+
+    // MARK: - Waveform Analysis
+
+    /// Analyzes `buffer` off the main thread and publishes `waveformData` when done.
+    ///
+    /// Uses its own generation counter so a result from a superseded track is discarded
+    /// even if it arrives after the next track's analysis has already started.
+    func triggerWaveformAnalysis(buffer: AVAudioPCMBuffer, track: Track) {
+        waveformGeneration += 1
+        let gen        = waveformGeneration
+        let sampleRate = buffer.format.sampleRate
+        let startFrame = effectiveStartFrame(for: track, sampleRate: sampleRate)
+        let endFrame   = effectiveEndFrame(for: track, sampleRate: sampleRate)
+                         ?? AVAudioFramePosition(buffer.frameLength)
+        let channel    = outputChannel
+
+        Task.detached(priority: .utility) { [weak self] in
+            let data = WaveformAnalyzer.analyze(
+                buffer: buffer,
+                startFrame: startFrame,
+                endFrame: endFrame,
+                outputChannel: channel
+            )
+            await MainActor.run { [weak self] in
+                guard let self, self.waveformGeneration == gen else { return }
+                self.waveformData = data
+            }
         }
     }
 
