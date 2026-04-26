@@ -173,30 +173,8 @@ class PlaybackController {
     func endInteractiveSeek() {
         guard isInteractiveSeeking else { return }
         isInteractiveSeeking = false
-
         guard let track = currentTrack else { return }
-        let finalPosition = currentTime
-
-        loadTask?.cancel()
-        loadTask = nil
-        playbackGeneration += 1
-        let gen = playbackGeneration
-        seekTimeOffset = 0
-
-        willStartTrack(track, generation: gen)
-
-        if let fullBuffer = currentFullBuffer {
-            applySlice(from: fullBuffer, track: track, position: finalPosition,
-                       generation: gen, startPlayback: interactiveSeekWasPlaying)
-        } else {
-            loadBuffer(for: track, generation: gen) { [weak self] buffer in
-                guard let self else { return }
-                self.currentFullBuffer = buffer
-                if self.waveformData == nil { self.triggerWaveformAnalysis(buffer: buffer, track: track) }
-                self.applySlice(from: buffer, track: track, position: finalPosition,
-                                generation: gen, startPlayback: self.interactiveSeekWasPlaying)
-            }
-        }
+        commitSeek(to: currentTime, track: track, startPlayback: interactiveSeekWasPlaying)
     }
 
     func pause() {
@@ -268,20 +246,25 @@ class PlaybackController {
         }
 
         let wasPlaying = isPlaying
+        currentTime = clamped
+        isPlaying   = false
+        stopPositionTimer()
+        commitSeek(to: clamped, track: track, startPlayback: wasPlaying)
+    }
 
+    /// Cancels any in-flight buffer load, bumps the generation, and schedules a new
+    /// slice at `position`. Called by both `seek(to:)` and `endInteractiveSeek()`.
+    private func commitSeek(to position: TimeInterval, track: Track, startPlayback: Bool) {
         loadTask?.cancel()
         loadTask = nil
         playbackGeneration += 1
         let gen = playbackGeneration
 
-        currentTime = clamped
-        isPlaying   = false
-        stopPositionTimer()
-
-        willStartTrack(track, generation: gen)  // give subclasses a chance to cancel prefetch/chain
+        willStartTrack(track, generation: gen)
 
         if let fullBuffer = currentFullBuffer {
-            applySlice(from: fullBuffer, track: track, position: clamped, generation: gen, startPlayback: wasPlaying)
+            applySlice(from: fullBuffer, track: track, position: position,
+                       generation: gen, startPlayback: startPlayback)
             return
         }
 
@@ -290,9 +273,10 @@ class PlaybackController {
             guard let self else { return }
             self.currentFullBuffer = buffer
             if self.waveformData == nil { self.triggerWaveformAnalysis(buffer: buffer, track: track) }
-            // Re-evaluate: if resume() was called while the buffer was loading, honour it.
-            let shouldPlay = wasPlaying || self.isPlaying
-            self.applySlice(from: buffer, track: track, position: clamped, generation: gen, startPlayback: shouldPlay)
+            // Re-evaluate: honour a resume() that arrived while the buffer was loading.
+            let shouldPlay = startPlayback || self.isPlaying
+            self.applySlice(from: buffer, track: track, position: position,
+                            generation: gen, startPlayback: shouldPlay)
         }
     }
 
