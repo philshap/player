@@ -41,52 +41,32 @@ final class PlaylistManager {
 
     // MARK: - Track Management
 
-    func addTrack(_ track: Track, to playlist: Playlist, modelContext: ModelContext) {
-        let nextSortOrder = playlist.entries.count
-        if let existingIndex = playlist.entries.firstIndex(where: { $0.track.id == track.id }) {
-            // Disallow duplicate entries; move existing entry to the end of the playlist.
-            let entry = playlist.entries[existingIndex]
-            entry.sortOrder = nextSortOrder
+    func addTrack(_ track: Track, to playlist: Playlist, modelContext _: ModelContext) {
+        if let existingIndex = playlist.tracks.firstIndex(where: { $0.id == track.id }) {
+            // Disallow duplicates; move existing track to the end of the playlist.
+            let existingTrack = playlist.tracks.remove(at: existingIndex)
+            playlist.tracks.append(existingTrack)
         } else {
-            modelContext.insert(PlaylistEntry(track: track, playlist: playlist, sortOrder: nextSortOrder))
+            playlist.tracks.append(track)
         }
         playlist.dateModified = Date()
         notify(playlist)
     }
 
-    func removeTrack(at index: Int, from playlist: Playlist, modelContext: ModelContext) {
-        let sorted = playlist.entries.sorted { $0.sortOrder < $1.sortOrder }
-        guard index >= 0, index < sorted.count else { return }
-
-        let entryToRemove = sorted[index]
-        modelContext.delete(entryToRemove)
-
-        // Re-normalize sortOrder for remaining entries
-        let remaining = sorted.filter { $0.id != entryToRemove.id }
-        for (newOrder, entry) in remaining.enumerated() {
-            entry.sortOrder = newOrder
-        }
-
+    func removeTrack(at index: Int, from playlist: Playlist, modelContext _: ModelContext) {
+        guard index >= 0, index < playlist.tracks.count else { return }
+        playlist.tracks.remove(at: index)
         playlist.dateModified = Date()
-        // Save before notifying so that observers see a fully consistent model —
-        // modelContext.delete() marks the entry for deletion but doesn't remove it
-        // from the playlist.entries relationship until the context is saved.
-        try? modelContext.save()
         notify(playlist)
     }
 
     func moveTrack(in playlist: Playlist, from sourceIndex: Int, to destinationIndex: Int) {
-        var sorted = playlist.entries.sorted { $0.sortOrder < $1.sortOrder }
-        guard sourceIndex >= 0, sourceIndex < sorted.count,
-              destinationIndex >= 0, destinationIndex < sorted.count,
+        guard sourceIndex >= 0, sourceIndex < playlist.tracks.count,
+              destinationIndex >= 0, destinationIndex < playlist.tracks.count,
               sourceIndex != destinationIndex else { return }
 
-        let entry = sorted.remove(at: sourceIndex)
-        sorted.insert(entry, at: destinationIndex)
-
-        for (newOrder, entry) in sorted.enumerated() {
-            entry.sortOrder = newOrder
-        }
+        let track = playlist.tracks.remove(at: sourceIndex)
+        playlist.tracks.insert(track, at: destinationIndex)
 
         playlist.dateModified = Date()
         notify(playlist)

@@ -9,9 +9,6 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 
 ### Code cleanups
 
-- find out if we really need playlist entry sortOrder, if playlist entries are always in sort order. Right now the code
-  sorts the entries in a few different places, which wouldn't be needed if the list was always in sort order.
-
 ---
 
 ## Medium Priority / Medium Difficulty

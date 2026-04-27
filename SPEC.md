@@ -120,7 +120,7 @@ The primary concern is preventing accidental modifications during live playback 
 
 ### Playlist
 - Name
-- Ordered list of track references (via PlaylistEntry join table with sortOrder)
+- Ordered list of track references (`Playlist.tracks`)
 - Date created / modified
 
 ### Playlist Statistics

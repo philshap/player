@@ -43,7 +43,7 @@ struct PlaylistWindowView: View {
 
     @ViewBuilder
     private func playlistContent(_ playlist: Playlist) -> some View {
-        let tracks = playlist.orderedTracks
+        let tracks = playlist.tracks
 
         NavigationStack {
             VStack(spacing: 0) {
@@ -82,7 +82,7 @@ struct PlaylistWindowView: View {
             .navigationTitle(
                 playlist.name + " • " +
                 Duration.seconds(
-                    playlist.orderedTracks.map(\.duration).reduce(0, +)
+                    playlist.tracks.map(\.duration).reduce(0, +)
                 )
                 .formatted(.time(pattern: .hourMinuteSecond))
             )
@@ -147,7 +147,7 @@ struct PlaylistWindowView: View {
                     let droppedTracks = allTracks.filter { trackIDs.contains($0.id) }
                     for (offset, track) in droppedTracks.enumerated() {
                         appState.playlistManager.addTrack(track, to: playlist, modelContext: modelContext)
-                        let lastIndex = playlist.entries.count - 1
+                        let lastIndex = playlist.tracks.count - 1
                         if lastIndex > index + offset {
                             appState.playlistManager.moveTrack(
                                 in: playlist,

@@ -149,7 +149,7 @@ final class AppState {
         let _ = newFolderURL.startAccessingSecurityScopedResource()
 
         // Open the old store read-only to extract track data
-        let schema = Schema([Track.self, Playlist.self, PlaylistEntry.self])
+        let schema = Schema([Track.self, Playlist.self])
         let oldConfig = ModelConfiguration(url: storeURL)
         let oldContainer = try ModelContainer(for: schema, configurations: [oldConfig])
         let oldContext = ModelContext(oldContainer)
@@ -208,15 +208,14 @@ final class AppState {
             newTrackByOldID[track.id] = newTrack
         }
 
-        // Re-create playlists and entries
+        // Re-create playlists and track relationships
         for playlist in allPlaylists {
             let newPlaylist = Playlist(name: playlist.name)
             newPlaylist.dateCreated = playlist.dateCreated
             newContext.insert(newPlaylist)
-            for entry in playlist.entries.sorted(by: { $0.sortOrder < $1.sortOrder }) {
-                guard let newTrack = newTrackByOldID[entry.track.id] else { continue }
-                let newEntry = PlaylistEntry(track: newTrack, playlist: newPlaylist, sortOrder: entry.sortOrder)
-                newContext.insert(newEntry)
+            for track in playlist.tracks {
+                guard let newTrack = newTrackByOldID[track.id] else { continue }
+                newPlaylist.tracks.append(newTrack)
             }
         }
 
@@ -276,7 +275,7 @@ final class AppState {
     }
 
     private func loadLibrary(at folderURL: URL) throws {
-        let schema = Schema([Track.self, Playlist.self, PlaylistEntry.self])
+        let schema = Schema([Track.self, Playlist.self])
         let storeURL = folderURL.appending(path: "library.sqlite")
         let config = ModelConfiguration(url: storeURL)
 
@@ -284,13 +283,8 @@ final class AppState {
         do {
             container = try ModelContainer(for: schema, configurations: [config])
         } catch {
-            // Migration failed — delete the store and retry with a fresh one
-            print("[AppState] ModelContainer creation failed, resetting store: \(error)")
-            let related = [storeURL,
-                           storeURL.appendingPathExtension("wal"),
-                           storeURL.appendingPathExtension("shm")]
-            for url in related { try? FileManager.default.removeItem(at: url) }
-            container = try ModelContainer(for: schema, configurations: [config])
+            print("[AppState] ModelContainer creation failed: \(error)")
+            throw error
         }
 
         self.modelContainer = container

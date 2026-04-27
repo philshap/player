@@ -74,7 +74,7 @@ final class MainPlaybackController: PlaybackController {
     func loadPlaylist(_ playlistModel: Playlist) {
         stop()
         activePlaylistModel = playlistModel
-        playlist = playlistModel.orderedTracks
+        playlist = playlistModel.tracks
         startPlaylistChangeObserver()
         preloadFirstTrack()
     }
@@ -314,7 +314,7 @@ final class MainPlaybackController: PlaybackController {
 
     private func syncPlaylistFromModel() {
         guard let model = activePlaylistModel else { return }
-        let newTracks = model.orderedTracks
+        let newTracks = model.tracks
         playlist = newTracks
 
         if let currentID = currentTrack?.id,
@@ -339,7 +339,7 @@ final class MainPlaybackController: PlaybackController {
     /// even if a notification is still queued on the run loop.
     private func refreshPlaylistFromActiveModel() {
         guard let model = activePlaylistModel else { return }
-        playlist = model.orderedTracks
+        playlist = model.tracks
         if let currentID = currentTrack?.id,
            let newIndex = playlist.firstIndex(where: { $0.id == currentID }) {
             currentTrackIndex = newIndex

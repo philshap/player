@@ -35,8 +35,7 @@ final class Track {
     var bpmSortValue: Double { bpm ?? 0 }
     var lastPlayedDateSortValue: Date { lastPlayedDate ?? Date.distantPast }
 
-    @Relationship(inverse: \PlaylistEntry.track)
-    var playlistEntries: [PlaylistEntry] = []
+    var playlists: [Playlist] = []
 
     init(
         relativePath: String,
@@ -115,33 +114,13 @@ final class Playlist {
     var dateCreated: Date = Date()
     var dateModified: Date = Date()
 
-    @Relationship(deleteRule: .cascade, inverse: \PlaylistEntry.playlist)
-    var entries: [PlaylistEntry] = []
-
-    /// Returns tracks ordered by sortOrder.
-    var orderedTracks: [Track] {
-        entries.sorted { $0.sortOrder < $1.sortOrder }.map(\.track)
-    }
+    @Relationship(inverse: \Track.playlists)
+    var tracks: [Track] = []
 
     init(name: String) {
         self.id = UUID()
         self.name = name
         self.dateCreated = Date()
         self.dateModified = Date()
-    }
-}
-
-@Model
-final class PlaylistEntry {
-    var id: UUID = UUID()
-    var sortOrder: Int = 0
-    var track: Track
-    var playlist: Playlist
-
-    init(track: Track, playlist: Playlist, sortOrder: Int) {
-        self.id = UUID()
-        self.track = track
-        self.playlist = playlist
-        self.sortOrder = sortOrder
     }
 }

@@ -4,7 +4,7 @@
 
 ### 1.1 SwiftData Models
 - Track model with all metadata fields (title, artist, album, duration, BPM, rating, date added, play count, last played, file URL, cue points, artwork)
-- Playlist model (name, ordered track references via PlaylistEntry, date created/modified)
+- Playlist model (name, ordered `tracks` references, date created/modified)
 - SwiftData ModelContainer in app entry point
 
 ### 1.2 Library Import Service

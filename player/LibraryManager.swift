@@ -191,9 +191,6 @@ final class LibraryManager {
             }
         }
 
-        for entry in track.playlistEntries {
-            modelContext.delete(entry)
-        }
         modelContext.delete(track)
     }
 
