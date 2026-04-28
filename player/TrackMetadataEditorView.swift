@@ -13,6 +13,7 @@ import SwiftUI
 struct TrackMetadataEditorView: View {
 
     let tracks: [Track]
+    let allTags: [String]
     var onDismiss: () -> Void
 
     // MARK: - Editable fields
@@ -23,6 +24,8 @@ struct TrackMetadataEditorView: View {
     @State private var album: String
     @State private var bpmText: String
     @State private var bpmError: Bool = false
+    @State private var tags: [String]
+    @State private var newTagInput: String = ""
 
     // MARK: - Play count confirmation
 
@@ -32,9 +35,10 @@ struct TrackMetadataEditorView: View {
 
     // MARK: - Init
 
-    init(tracks: [Track], startIndex: Int = 0, onDismiss: @escaping () -> Void) {
+    init(tracks: [Track], startIndex: Int = 0, allTags: [String] = [], onDismiss: @escaping () -> Void) {
         precondition(!tracks.isEmpty)
         self.tracks = tracks
+        self.allTags = allTags
         self.onDismiss = onDismiss
         let index = tracks.indices.contains(startIndex) ? startIndex : 0
         _currentIndex = State(initialValue: index)
@@ -42,6 +46,7 @@ struct TrackMetadataEditorView: View {
         _artist  = State(initialValue: tracks[index].artist)
         _album   = State(initialValue: tracks[index].album)
         _bpmText = State(initialValue: tracks[index].bpm.map { String(format: "%.0f", $0) } ?? "")
+        _tags    = State(initialValue: tracks[index].tags)
     }
 
     // MARK: - Convenience
@@ -113,6 +118,12 @@ struct TrackMetadataEditorView: View {
                     TextField("Album", text: $album)
                         .textFieldStyle(.plain)
                         .multilineTextAlignment(.trailing)
+                }
+
+                Section("Tags") {
+                    tagChipsRow
+                    tagInputRow
+                    tagSuggestionRows
                 }
 
                 Section("Playback") {
@@ -219,17 +230,85 @@ struct TrackMetadataEditorView: View {
         }
     }
 
+    // MARK: - Tag Section Views
+
+    @ViewBuilder private var tagChipsRow: some View {
+        if !tags.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(tags, id: \.self) { tag in
+                        tagChip(tag)
+                    }
+                }
+            }
+            .frame(height: 30)
+        }
+    }
+
+    private func tagChip(_ tag: String) -> some View {
+        HStack(spacing: 3) {
+            Text(tag).font(.callout)
+            Button {
+                tags.removeAll { $0 == tag }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+        .overlay(Capsule().stroke(Color.accentColor.opacity(0.3), lineWidth: 0.5))
+    }
+
+    @ViewBuilder private var tagInputRow: some View {
+        HStack {
+            TextField("Add tag…", text: $newTagInput)
+                .textFieldStyle(.plain)
+                .multilineTextAlignment(.trailing)
+                .onSubmit { commitNewTag() }
+            if !newTagInput.trimmingCharacters(in: .whitespaces).isEmpty {
+                Button("Add") { commitNewTag() }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(Color.accentColor)
+                    .font(.callout)
+            }
+        }
+    }
+
+    @ViewBuilder private var tagSuggestionRows: some View {
+        ForEach(tagSuggestions, id: \.self) { suggestion in
+            Button {
+                addTag(suggestion)
+            } label: {
+                HStack {
+                    Image(systemName: "tag")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(suggestion)
+                    Spacer()
+                }
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
     // MARK: - Navigation
 
     private func navigateTo(_ index: Int) {
         guard tracks.indices.contains(index) else { return }
         applyEdits()
         currentIndex = index
-        title   = track.title
-        artist  = track.artist
-        album   = track.album
-        bpmText = track.bpm.map { String(format: "%.0f", $0) } ?? ""
-        bpmError = false
+        title       = track.title
+        artist      = track.artist
+        album       = track.album
+        bpmText     = track.bpm.map { String(format: "%.0f", $0) } ?? ""
+        tags        = track.tags
+        newTagInput = ""
+        bpmError    = false
         titleFocused = false
         Task { @MainActor in titleFocused = true }
     }
@@ -242,11 +321,32 @@ struct TrackMetadataEditorView: View {
         return v
     }
 
+    private var tagSuggestions: [String] {
+        let input = newTagInput.trimmingCharacters(in: .whitespaces)
+        guard !input.isEmpty else { return [] }
+        return Array(allTags.filter { suggestion in
+            !tags.contains(suggestion) &&
+            suggestion.localizedCaseInsensitiveContains(input)
+        }.prefix(5))
+    }
+
+    private func addTag(_ tag: String) {
+        let trimmed = tag.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, !tags.contains(trimmed) else { return }
+        tags.append(trimmed)
+        newTagInput = ""
+    }
+
+    private func commitNewTag() {
+        addTag(newTagInput)
+    }
+
     private func applyEdits() {
         let trimTitle = title.trimmingCharacters(in: .whitespaces)
         if !trimTitle.isEmpty { track.title = trimTitle }
         track.artist = artist.trimmingCharacters(in: .whitespaces)
         track.album  = album.trimmingCharacters(in: .whitespaces)
+        track.tags   = tags
         if bpmText.isEmpty {
             track.bpm = nil
         } else if let bpm = parsedBPM {

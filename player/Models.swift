@@ -22,6 +22,7 @@ final class Track {
     var bpm: Double?
     /// User rating 0-5 (0 = unrated)
     var rating: Int = 0
+    var tags: [String] = []
     var dateAdded: Date = Date()
     var playCount: Int = 0
     var lastPlayedDate: Date?

@@ -37,16 +37,14 @@ struct TrackRow: Identifiable, Sendable {
     // Album artwork thumbnail data
     let artworkData: Data?
 
-    // Cue points
-    let cuePointIn: TimeInterval?
-    let cuePointOut: TimeInterval?
+    let tags: [String]
+    let sortableTagsString: String
 
     // Pre-formatted display strings — no formatter overhead during rendering
     let formattedBPM: String
     let formattedDuration: String
     let formattedLastPlayed: String
     let formattedDateAdded: String
-    let formattedCuePoints: String
 
     private static func stripLeadingThe(_ s: String) -> String {
         if s.count > 4, s.lowercased().hasPrefix("the ") {
@@ -69,8 +67,8 @@ struct TrackRow: Identifiable, Sendable {
         self.duration = track.duration
         self.lastPlayedSortValue = track.lastPlayedDate ?? .distantPast
         self.dateAdded = track.dateAdded
-        self.cuePointIn = track.cuePointIn
-        self.cuePointOut = track.cuePointOut
+        self.tags = track.tags
+        self.sortableTagsString = track.tags.sorted().joined(separator: ",")
 
         if let bpm = track.bpm {
             self.formattedBPM = String(format: "%.0f", bpm)
@@ -87,11 +85,6 @@ struct TrackRow: Identifiable, Sendable {
         }
 
         self.formattedDateAdded = sharedDateFormatter.string(from: track.dateAdded)
-
-        var cue = ""
-        if let i = track.cuePointIn  { cue += "►\(i.mmss())" }
-        if let o = track.cuePointOut { cue += (cue.isEmpty ? "" : " ") + "◼\(o.mmss())" }
-        self.formattedCuePoints = cue
     }
 }
 
@@ -153,6 +146,8 @@ struct LibraryView: View {
     /// Incremented on sort/filter changes to force Table recreation instead of diffing 500 rows.
     @State private var tableGeneration: Int = 0
     @State private var editingTracks: [Track] = []
+    @State private var selectedTags: Set<String> = []
+    @State private var allTagsInLibrary: [String] = []
     @State private var diskSpaceFree: String = ""
     @State private var showUnmigratedAlert = false
     @State private var pendingAppleMusicURLs: [URL] = []
@@ -160,10 +155,18 @@ struct LibraryView: View {
     @State private var showItunesAccessSheet = false
 
     var body: some View {
+        mainContent
+            .onChange(of: searchText) { recomputeFilteredRows(resetScroll: false) }
+            .onChange(of: sortOrder) { recomputeFilteredRows() }
+            .onChange(of: selectedTags) { recomputeFilteredRows(resetScroll: false) }
+    }
+
+    private var mainContent: some View {
         NavigationSplitView {
             sidebar
         } detail: {
             trackTable
+                .safeAreaInset(edge: .top, spacing: 0) { filterBarInset }
         }
         .background(
             Button("", action: editMetadataForSelection)
@@ -223,13 +226,11 @@ struct LibraryView: View {
         .onChange(of: tracks.map(\.rating)) { recomputeAllRows(resetScroll: false) }
         .onChange(of: tracks.map(\.playCount)) { recomputeAllRows(resetScroll: false) }
         .onChange(of: tracks.map(\.lastPlayedDate)) { recomputeAllRows(resetScroll: false) }
-        .onChange(of: searchText) { recomputeFilteredRows(resetScroll: false) }
-        .onChange(of: sortOrder) { recomputeFilteredRows() }
         .sheet(isPresented: Binding(
             get: { !editingTracks.isEmpty },
             set: { if !$0 { editingTracks = [] } }
         )) {
-            TrackMetadataEditorView(tracks: editingTracks) {
+            TrackMetadataEditorView(tracks: editingTracks, allTags: allTagsInLibrary) {
                 editingTracks = []
                 recomputeAllRows(resetScroll: false)
             }
@@ -255,21 +256,27 @@ struct LibraryView: View {
     /// rating update). Avoids calling this on every keystroke.
     private func recomputeAllRows(resetScroll: Bool = true) {
         allRows = tracks.map { TrackRow($0) }
+        allTagsInLibrary = Array(Set(allRows.flatMap(\.tags))).sorted()
+        selectedTags = selectedTags.intersection(Set(allTagsInLibrary))
         recomputeFilteredRows(resetScroll: resetScroll)
     }
 
     /// Filters and sorts the cached `allRows` without rebuilding TrackRow objects.
     /// Call this for search text or sort order changes.
     private func recomputeFilteredRows(resetScroll: Bool = true) {
-        let filtered: [TrackRow]
-        if searchText.isEmpty {
-            filtered = allRows
-        } else {
+        var filtered = allRows
+        if !searchText.isEmpty {
             let query = searchText.localizedLowercase
-            filtered = allRows.filter { row in
+            filtered = filtered.filter { row in
                 row.title.localizedCaseInsensitiveContains(query)
                 || row.artist.localizedCaseInsensitiveContains(query)
                 || row.album.localizedCaseInsensitiveContains(query)
+                || row.tags.contains(where: { $0.localizedCaseInsensitiveContains(query) })
+            }
+        }
+        if !selectedTags.isEmpty {
+            filtered = filtered.filter { row in
+                selectedTags.isSubset(of: Set(row.tags))
             }
         }
         let sorted = filtered.sorted(using: sortOrder)
@@ -280,6 +287,45 @@ struct LibraryView: View {
         if needsRecreation {
             tableGeneration += 1
         }
+    }
+
+    // MARK: - Tag Filter Bar
+
+    @ViewBuilder private var filterBarInset: some View {
+        if !allTagsInLibrary.isEmpty {
+            VStack(spacing: 0) {
+                tagFilterBar
+                Divider()
+            }
+        }
+    }
+
+    private var tagFilterBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(allTagsInLibrary, id: \.self) { tag in
+                    Toggle(
+                        isOn: Binding(
+                            get: { selectedTags.contains(tag) },
+                            set: { if $0 { selectedTags.insert(tag) } else { selectedTags.remove(tag) } }
+                        )
+                    ) {
+                        Text(tag)
+                    }
+                    .toggleStyle(.button)
+                    .controlSize(.small)
+                }
+                if !selectedTags.isEmpty {
+                    Button("Clear") { selectedTags.removeAll() }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .font(.callout)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+        }
+        .background(.background.secondary)
     }
 
     // MARK: - Sidebar
@@ -360,6 +406,22 @@ struct LibraryView: View {
                     .lineLimit(1)
             }
 
+            TableColumn("Tags", value: \.sortableTagsString) { row in
+                if !row.tags.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(row.tags, id: \.self) { tag in
+                            Text(tag)
+                                .font(.caption2)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                                .lineLimit(1)
+                        }
+                    }
+                }
+            }
+            .width(min: 60, ideal: 130)
+
             TableColumn("BPM", value: \.bpmSortValue) { row in
                 if row.formattedBPM.isEmpty {
                     Text("—")
@@ -398,16 +460,6 @@ struct LibraryView: View {
                 }
             }
             .width(min: 80, ideal: 110, max: 140)
-
-            TableColumn("Cue") { row in
-                if !row.formattedCuePoints.isEmpty {
-                    Text(row.formattedCuePoints)
-                        .font(.caption2)
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .width(min: 55, ideal: 90, max: 120)
         } rows: {
             ForEach(displayedRows) { row in
                 TableRow(row)

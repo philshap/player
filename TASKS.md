@@ -7,6 +7,12 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 
 ### Misc bugs / features
 
+- open playlist windows aaren't re-opened when app starts up
+
+- diagnose / fix warning "It's not legal to call -layoutSubtreeIfNeeded on a view which is already being laid out.  If you are implementing the view's -layout method, you can call -[super layout] instead.  Break on void _NSDetectedLayoutRecursion(void) to debug.  This will be logged only once.  This may break in the future."
+
+- don't start playback when audio output changes if playback is paused
+
 ### Code cleanups
 
 ---
@@ -34,7 +40,7 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 
 ## Low Priority / Low Difficulty
 
-- remove old support for non-directory libraries. Or, add it back as an option to select so user can choose which model they want
+- remove support for non-directory libraries. Or, add it back as an option to select so user can choose which model they want
 
 
 ### Keyboard Shortcut Expansion

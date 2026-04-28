@@ -120,3 +120,13 @@
 
 ### 6.2 Shared TrackInfoView Component
 - Added `TrackInfoView` (artwork + title/artist label) to replace repeated HStack/VStack layout in `PlayerView` (main section, preview section) and `PlaylistWindowView` (performance controls)
+
+## Phase 7: Tags (Complete)
+
+### 7.1 Track Tags
+- `tags: [String]` field on the `Track` SwiftData model (lightweight migration, default `[]`)
+- Tags column in library table — capsule chips, sortable by joined tag string
+- Tag filter bar above the table (`safeAreaInset`) — toggle buttons for each tag in the library, AND-logic for multi-tag selection, auto-cleans stale selections
+- Text search now also matches tag names
+- Tags section in the metadata editor: chip row with ×-to-remove, text input with autocomplete suggestions from existing library tags, keyboard-submit support
+- Tags editable across multiple tracks via the existing prev/next navigation in the editor
