@@ -149,7 +149,6 @@ struct LibraryView: View {
     @State private var selectedTags: Set<String> = []
     @State private var allTagsInLibrary: [String] = []
     @State private var diskSpaceFree: String = ""
-    @State private var showUnmigratedAlert = false
     @State private var pendingAppleMusicURLs: [URL] = []
     @State private var appleMusicFolderURL: URL? = nil
     @State private var showItunesAccessSheet = false
@@ -216,7 +215,6 @@ struct LibraryView: View {
         .onAppear {
             recomputeAllRows()
             refreshDiskSpace()
-            checkForUnmigratedTracks()
         }
         .onChange(of: tracks.count) { oldCount, newCount in
             // Only reset scroll when tracks are added (e.g. import) so the new
@@ -234,11 +232,6 @@ struct LibraryView: View {
                 editingTracks = []
                 recomputeAllRows(resetScroll: false)
             }
-        }
-        .alert("Unmigrated Tracks", isPresented: $showUnmigratedAlert) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Some tracks use the old path format and may not play on another Mac. Use File > Migrate Library to convert them to the portable format.")
         }
         .alert("iTunes Library Access Needed", isPresented: $showItunesAccessSheet) {
             Button("Select iTunes Media Folder") { openItunesMediaPanel() }
@@ -604,13 +597,6 @@ struct LibraryView: View {
             formatter.allowedUnits = [.useGB, .useMB]
             formatter.countStyle = .file
             diskSpaceFree = formatter.string(fromByteCount: bytes)
-        }
-    }
-
-    private func checkForUnmigratedTracks() {
-        let unmigratedCount = tracks.filter { $0.relativePath.isEmpty }.count
-        if unmigratedCount > 0 {
-            showUnmigratedAlert = true
         }
     }
 
