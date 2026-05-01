@@ -438,13 +438,36 @@ class PlaybackController {
 
     // MARK: - Configuration-Change Hook
 
+    /// Saved across `handleEngineConfigurationChange` → `resumeAfterEngineRestart`
+    /// so the engine manager can restore playing state after the engine starts.
+    @ObservationIgnored private var wasPlayingBeforeConfigChange = false
+
     /// Called by `AudioEngineManager` when the audio hardware configuration changes.
-    /// Resets playing state and reconnects nodes with the fresh player format.
+    /// Saves playing state, stops the player node (prevents any auto-resume on
+    /// reconnect), and re-establishes graph connections with the new format.
     func handleEngineConfigurationChange() {
+        wasPlayingBeforeConfigChange = isPlaying
         isPlaying = false
         pendingSeek?.cancel()
         pendingSeek = nil
+        stopPlayer()
         audioEngine.connect(player: player, mixer: mixer)
+    }
+
+    /// Called by `AudioEngineManager` after `engine.start()` succeeds.
+    /// Re-schedules and resumes playback if the controller was playing before the
+    /// config change, provided the buffer format still matches the new player format.
+    func resumeAfterEngineRestart() {
+        guard wasPlayingBeforeConfigChange else { return }
+        wasPlayingBeforeConfigChange = false
+        guard let track = currentTrack,
+              let buffer = currentFullBuffer,
+              buffer.format.sampleRate == audioEngine.playerFormat?.sampleRate else {
+            // Format changed or no track loaded — user must press play again.
+            return
+        }
+        applySlice(from: buffer, track: track, position: currentTime,
+                   generation: playbackGeneration, startPlayback: true)
     }
 
     // MARK: - Slicing & Scheduling

@@ -7,11 +7,7 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 
 ### Misc bugs / features
 
-- open playlist windows aaren't re-opened when app starts up
-
-- diagnose / fix warning "It's not legal to call -layoutSubtreeIfNeeded on a view which is already being laid out.  If you are implementing the view's -layout method, you can call -[super layout] instead.  Break on void _NSDetectedLayoutRecursion(void) to debug.  This will be logged only once.  This may break in the future."
-
-- don't start playback when audio output changes if playback is paused
+- log contains messages "MP4_BoxParser_Meta.cpp:516    Failed to read child box header", "MP4_BoxParser.cpp:1087   DataSource read failed", if these are benign, can they be silenced?
 
 ### Code cleanups
 

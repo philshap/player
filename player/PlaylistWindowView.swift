@@ -32,10 +32,15 @@ struct PlaylistWindowView: View {
             }
         }
         .frame(minWidth: 600, minHeight: 400)
+        .onAppear {
+            // If the playlist was deleted while the app was closed, the system
+            // will still try to restore its window (restorationBehavior: .automatic),
+            // but @Query will find nothing. onChange(of: playlist == nil) only fires
+            // on transitions, so we need onAppear to catch the nil-from-birth case.
+            if playlist == nil { dismiss() }
+        }
         .onChange(of: playlist == nil) {
-            if playlist == nil {
-                dismiss()
-            }
+            if playlist == nil { dismiss() }
         }
     }
 

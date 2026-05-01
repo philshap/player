@@ -112,6 +112,11 @@ final class AudioEngineManager {
             try engine.start()
         } catch {
             print("[AudioEngineManager] Restart after config change failed: \(error)")
+            return
+        }
+
+        for box in controllers {
+            box.value?.resumeAfterEngineRestart()
         }
     }
 

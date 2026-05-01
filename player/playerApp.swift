@@ -37,7 +37,7 @@ struct playerApp: App {
                 EmptyView()
             }
         }
-        .restorationBehavior(.disabled)
+        .restorationBehavior(.automatic)
 
         .commands {
             // Window commands
