@@ -15,7 +15,9 @@ enum AppMode: String, CaseIterable {
 /// Centralized app state holding shared services, library folder management, and mode.
 @Observable
 final class AppState {
-    var mode: AppMode = .curation
+    var mode: AppMode = .curation {
+        didSet { mainPlayback.recordsPlayStats = (mode != .performance) }
+    }
 
     /// The ID of the playlist currently loaded for performance playback.
     var performingPlaylistID: UUID? = nil

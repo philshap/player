@@ -5,15 +5,23 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 
 ## High Priority
 
-### Misc bugs / features
-
-- log contains messages "MP4_BoxParser_Meta.cpp:516    Failed to read child box header", "MP4_BoxParser.cpp:1087   DataSource read failed", if these are benign, can they be silenced?
-
-### Code cleanups
-
 ---
 
 ## Medium Priority / Medium Difficulty
+
+### Composite filtering in Library
+- use a filter rule to limit library view, which can combine text search, tags and other attribute filters
+- Possibly fold tag search into this filter view, use an expandable header area
+- for numeric files, support uspper / lower bounds
+- for dates, support before / after
+- for text, support contains / does not contain
+- no need to support multiple filters on the same attribute, but could allow it if makes filtering more general
+- example filter tasks are "BPM greater than X and less than Y", "Play count less then X", "Last Played date before X"
+- Once done, may want a way to save / load named filters
+
+### Update playback position display while mouse is pressed
+- Position display stops running on mouse down and "jumps" on mouse up, such as on a menu item
+- Nice to have; if this requires major changes it may not be worth doing
 
 ### Audio Level Display
 - Using bar graph or analog-style VU meter, show audio playback level for both playback channels
