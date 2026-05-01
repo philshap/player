@@ -40,6 +40,8 @@ struct playerApp: App {
         .restorationBehavior(.automatic)
 
         .commands {
+            PlaylistCommands()
+
             // Window commands
             CommandGroup(after: .newItem) {
                 Button("Open Library") {

@@ -159,6 +159,21 @@ struct LibraryView: View {
             .onChange(of: searchText) { recomputeFilteredRows(resetScroll: false) }
             .onChange(of: sortOrder) { recomputeFilteredRows() }
             .onChange(of: selectedTags) { recomputeFilteredRows(resetScroll: false) }
+            .focusedValue(\.playlistImportHandler, { [tracks, modelContext] exportData in
+                let (_, unmatchedCount) = PlaylistIO.importPlaylist(
+                    from: exportData,
+                    libraryTracks: tracks,
+                    modelContext: modelContext,
+                    playlistManager: appState.playlistManager
+                )
+                if unmatchedCount > 0 {
+                    let alert = NSAlert()
+                    alert.messageText = "Playlist Imported with Gaps"
+                    alert.informativeText = "\(unmatchedCount) track\(unmatchedCount == 1 ? "" : "s") could not be found in your library and were skipped."
+                    alert.alertStyle = .informational
+                    alert.runModal()
+                }
+            })
     }
 
     private var mainContent: some View {
