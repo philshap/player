@@ -297,22 +297,23 @@ struct LibraryView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(allTagsInLibrary, id: \.self) { tag in
-                    Toggle(
-                        isOn: Binding(
-                            get: { selectedTags.contains(tag) },
-                            set: { if $0 { selectedTags.insert(tag) } else { selectedTags.remove(tag) } }
-                        )
-                    ) {
+                    let isSelected = selectedTags.contains(tag)
+                    Button {
+                        if isSelected { selectedTags.remove(tag) } else { selectedTags.insert(tag) }
+                    } label: {
                         Text(tag)
                     }
-                    .toggleStyle(.button)
+                    .buttonStyle(.bordered)
+                    .tint(isSelected ? .accentColor : nil)
                     .controlSize(.small)
+                    .focusable(false)
                 }
                 if !selectedTags.isEmpty {
                     Button("Clear") { selectedTags.removeAll() }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
                         .font(.callout)
+                        .focusable(false)
                 }
             }
             .padding(.horizontal, 12)
@@ -337,8 +338,7 @@ struct LibraryView: View {
                 if !appState.isPerformanceMode {
                     Button {
                         let name = appState.playlistManager.uniquePlaylistName(base: "New Playlist", among: playlists)
-                        let playlist = appState.playlistManager.createPlaylist(name: name, modelContext: modelContext)
-                        openWindow(id: "playlist", value: playlist.id.uuidString)
+                        appState.playlistManager.createPlaylist(name: name, modelContext: modelContext)
                     } label: {
                         Label("New Playlist", systemImage: "plus")
                     }

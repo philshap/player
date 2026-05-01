@@ -40,6 +40,17 @@ struct playerApp: App {
         .restorationBehavior(.automatic)
 
         .commands {
+            // Replace the auto-generated "New Playlist Window" with "New Playlist",
+            // which creates a playlist first and then opens its window.
+            CommandGroup(replacing: .newItem) {
+                Button("New Playlist") {
+                    guard let ctx = appState.modelContainer?.mainContext else { return }
+                    let playlist = appState.playlistManager.createNewPlaylist(modelContext: ctx)
+                    openWindow(id: "playlist", value: playlist.id.uuidString)
+                }
+                .keyboardShortcut("N", modifiers: [.command])
+            }
+
             // Window commands
             CommandGroup(after: .newItem) {
                 Button("Open Library") {

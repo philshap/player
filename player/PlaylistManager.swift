@@ -23,6 +23,14 @@ final class PlaylistManager {
         return "\(base) \(counter)"
     }
 
+    /// Creates a uniquely named playlist, fetching existing names from the model context.
+    @discardableResult
+    func createNewPlaylist(modelContext: ModelContext) -> Playlist {
+        let existing = (try? modelContext.fetch(FetchDescriptor<Playlist>())) ?? []
+        let name = uniquePlaylistName(base: "New Playlist", among: existing)
+        return createPlaylist(name: name, modelContext: modelContext)
+    }
+
     @discardableResult
     func createPlaylist(name: String, modelContext: ModelContext) -> Playlist {
         let playlist = Playlist(name: name)

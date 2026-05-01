@@ -5,9 +5,11 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 
 ## High Priority
 
-- tag buttons shouldn't get keyboard focus
-- tag buttons in Library view not working in MacOS 15 - they appear but can't be clicked on 
-- replace New Playlist Window with New Playlist, which creates a new empty playlist
+### Misc
+- allow multiple seleection in playlist window
+- in player window, use performance UI for non-performance main playback
+- track art lookup in itunes should use album as well as artist and title, if track has album set
+- when dragging a selection of tracks onto the "New Playlist" button, there's no postiive drop feedback on the New Playlist button
 
 ---
 
@@ -34,12 +36,6 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 - Route main and preview to specific audio output devices
 - Support USB soundcards (e.g. Traktor Audio 2)
 - Would need AVAudioEngine output node configuration per device
-
-### Misc
-- allow multiple seleection in playlist window
-- in player window, use performance UI for non-performance main playback
-- if track has album set, track art lookup in itunes should use album as well as artist and title
-- when dragging a selection of tracks onto the "New Playlist" button, there's no postiive drop feedback on the New Playlist button
 
 
 ---
