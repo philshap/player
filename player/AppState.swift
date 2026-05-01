@@ -16,7 +16,7 @@ enum AppMode: String, CaseIterable {
 @Observable
 final class AppState {
     var mode: AppMode = .curation {
-        didSet { mainPlayback.recordsPlayStats = (mode != .performance) }
+        didSet { mainPlayback.recordsPlayStats = (mode == .performance) }
     }
 
     /// The ID of the playlist currently loaded for performance playback.

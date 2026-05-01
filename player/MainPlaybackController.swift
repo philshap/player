@@ -39,7 +39,7 @@ final class MainPlaybackController: PlaybackController {
     // MARK: - Play-Count Tracking
 
     /// When `false`, `recordPlayIfNeeded` is a no-op. Set by `AppState` to mirror performance mode.
-    var recordsPlayStats: Bool = true
+    var recordsPlayStats: Bool = false
 
     /// Set to `true` once the current track's play has been recorded. Reset when a new
     /// track starts. Prevents the same track being counted more than once regardless of
@@ -95,6 +95,8 @@ final class MainPlaybackController: PlaybackController {
     private func preloadFirstTrack() {
         guard !playlist.isEmpty else { return }
         playTrack(playlist[0], startPlayback: false)
+        // Mark as recorded so playTrack(at:) doesn't count a preloaded-but-unplayed track.
+        currentTrackPlayRecorded = true
     }
 
     // MARK: - Transport
