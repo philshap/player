@@ -66,12 +66,9 @@ struct PlaylistWindowView: View {
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .dropDestination(for: String.self) { droppedStrings, _ in
-                            let trackIDs = droppedStrings.flatMap { TrackTransfer.decode($0) }
                             let allTracks = (try? modelContext.fetch(FetchDescriptor<Track>())) ?? []
-                            let droppedTracks = allTracks.filter { trackIDs.contains($0.id) }
-                            for track in droppedTracks {
-                                appState.playlistManager.addTrack(track, to: playlist, modelContext: modelContext)
-                            }
+                            let droppedTracks = TrackTransfer.tracks(from: droppedStrings, in: allTracks)
+                            appState.playlistManager.addTracks(droppedTracks, to: playlist, modelContext: modelContext)
                             return !droppedTracks.isEmpty
                         }
                     } else {
@@ -147,9 +144,8 @@ struct PlaylistWindowView: View {
             provider.loadObject(ofClass: NSString.self) { item, _ in
                 guard let string = item as? String else { return }
                 DispatchQueue.main.async {
-                    let trackIDs = TrackTransfer.decode(string)
                     let allTracks = (try? modelContext.fetch(FetchDescriptor<Track>())) ?? []
-                    let droppedTracks = allTracks.filter { trackIDs.contains($0.id) }
+                    let droppedTracks = TrackTransfer.tracks(from: [string], in: allTracks)
                     for (offset, track) in droppedTracks.enumerated() {
                         appState.playlistManager.addTrack(track, to: playlist, modelContext: modelContext)
                         let lastIndex = playlist.tracks.count - 1
@@ -303,7 +299,7 @@ private struct PerformanceControlsView: View {
                     TrackInfoView(track: track, artworkSize: 40, titleFont: .headline)
                 }
                 Spacer()
-                if let next = nextTrack {
+                if let next = main.upcomingTrack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Up Next")
                             .font(.caption)
@@ -402,14 +398,6 @@ private struct PerformanceControlsView: View {
         .background(.orange.opacity(0.08))
     }
 
-    private var nextTrack: Track? {
-        let main = appState.mainPlayback
-        guard !main.playlist.isEmpty else { return nil }
-        if main.currentTrack == nil { return main.playlist.first }
-        let nextIndex = main.currentTrackIndex + 1
-        guard nextIndex >= 0, nextIndex < main.playlist.count else { return nil }
-        return main.playlist[nextIndex]
-    }
 
 }
 

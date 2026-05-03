@@ -345,17 +345,14 @@ struct LibraryView: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                     .dropDestination(for: String.self) { droppedStrings, _ in
-                        let trackIDs = droppedStrings.flatMap { TrackTransfer.decode($0) }
-                        let droppedTracks = tracks.filter { trackIDs.contains($0.id) }
+                        let droppedTracks = TrackTransfer.tracks(from: droppedStrings, in: tracks)
                         guard !droppedTracks.isEmpty else { return false }
                         let baseName = droppedTracks.count == 1
                             ? droppedTracks[0].title
                             : "New Playlist"
                         let name = appState.playlistManager.uniquePlaylistName(base: baseName, among: playlists)
                         let playlist = appState.playlistManager.createPlaylist(name: name, modelContext: modelContext)
-                        for track in droppedTracks {
-                            appState.playlistManager.addTrack(track, to: playlist, modelContext: modelContext)
-                        }
+                        appState.playlistManager.addTracks(droppedTracks, to: playlist, modelContext: modelContext)
                         openWindow(id: "playlist", value: playlist.id.uuidString)
                         return true
                     }
@@ -493,9 +490,7 @@ struct LibraryView: View {
                 Menu("Add to Playlist") {
                     ForEach(playlists) { playlist in
                         Button(playlist.name) {
-                            for track in selectedTracks {
-                                appState.playlistManager.addTrack(track, to: playlist, modelContext: modelContext)
-                            }
+                            appState.playlistManager.addTracks(selectedTracks, to: playlist, modelContext: modelContext)
                         }
                     }
                     if playlists.isEmpty {
@@ -816,11 +811,8 @@ private struct PlaylistSidebarRow: View {
                 .fill(isDropTargeted ? Color.accentColor.opacity(0.2) : .clear)
         )
         .dropDestination(for: String.self) { droppedStrings, _ in
-            let trackIDs = droppedStrings.flatMap { TrackTransfer.decode($0) }
-            let droppedTracks = tracks.filter { trackIDs.contains($0.id) }
-            for track in droppedTracks {
-                appState.playlistManager.addTrack(track, to: playlist, modelContext: modelContext)
-            }
+            let droppedTracks = TrackTransfer.tracks(from: droppedStrings, in: tracks)
+            appState.playlistManager.addTracks(droppedTracks, to: playlist, modelContext: modelContext)
             return !droppedTracks.isEmpty
         } isTargeted: { targeted in
             isDropTargeted = targeted

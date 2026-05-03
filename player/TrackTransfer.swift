@@ -16,4 +16,13 @@ enum TrackTransfer {
     static func decode(_ string: String) -> [UUID] {
         string.split(separator: separator).compactMap { UUID(uuidString: String($0)) }
     }
+
+    static func decode(_ strings: [String]) -> [UUID] {
+        strings.flatMap { decode($0) }
+    }
+
+    static func tracks(from strings: [String], in candidates: [Track]) -> [Track] {
+        let ids = Set(decode(strings))
+        return candidates.filter { ids.contains($0.id) }
+    }
 }

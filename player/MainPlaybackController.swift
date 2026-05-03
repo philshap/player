@@ -139,6 +139,14 @@ final class MainPlaybackController: PlaybackController {
         playTrack(at: next, startPlayback: wasPlaying)
     }
 
+    var upcomingTrack: Track? {
+        guard !playlist.isEmpty else { return nil }
+        if currentTrack == nil { return playlist.first }
+        let next = currentTrackIndex + 1
+        guard next < playlist.count else { return nil }
+        return playlist[next]
+    }
+
     func previousTrack() {
         refreshPlaylistFromActiveModel()
         if currentTrack == nil {

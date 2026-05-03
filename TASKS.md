@@ -25,7 +25,7 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 - example filter tasks are "BPM greater than X and less than Y", "Play count less then X", "Last Played date before X"
 - Once done, may want a way to save / load named filters
 
-### Update playback position display while mouse is pressed
+### Keep updating playback position display while mouse is pressed
 - Position display stops running on mouse down and "jumps" on mouse up, such as on a menu item
 - Nice to have; if this requires major changes it may not be worth doing
 
