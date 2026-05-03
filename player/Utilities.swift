@@ -71,7 +71,7 @@ struct WindowAutosaver: NSViewRepresentable {
                 defaults.removeObject(forKey: appKitKey)
             }
 
-            let autosaveSet = window.setFrameAutosaveName(name)
+            _ = window.setFrameAutosaveName(name)
             let stored = defaults.string(forKey: appKitKey)
             initialDescriptor = stored
 

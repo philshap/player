@@ -81,7 +81,7 @@ struct PlayerView: View {
                     )
                     Spacer()
                     if isPerformance {
-                        performanceNextTrackSection(track: performanceNextTrack, fixedWidth: upNextPanelWidth)
+                        upNextSection(track: appState.mainPlayback.upcomingTrack, fixedWidth: upNextPanelWidth)
                     }
                 }
             } else {
@@ -90,7 +90,7 @@ struct PlayerView: View {
                         .foregroundStyle(.secondary)
                     Spacer()
                     if isPerformance {
-                        performanceNextTrackSection(track: performanceNextTrack, fixedWidth: upNextPanelWidth)
+                        upNextSection(track: appState.mainPlayback.upcomingTrack, fixedWidth: upNextPanelWidth)
                     }
                 }
             }
@@ -176,7 +176,7 @@ struct PlayerView: View {
     }
 
     @ViewBuilder
-    private func performanceNextTrackSection(track: Track?, fixedWidth: CGFloat) -> some View {
+    private func upNextSection(track: Track?, fixedWidth: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Up Next")
                 .font(.caption)
@@ -214,16 +214,7 @@ struct PlayerView: View {
         return "\(Int(bpm.rounded())) BPM"
     }
 
-    private var performanceNextTrack: Track? {
-        let main = appState.mainPlayback
-        guard !main.playlist.isEmpty else { return nil }
-        if main.currentTrack == nil {
-            return main.playlist.first
-        }
-        let nextIndex = main.currentTrackIndex + 1
-        guard nextIndex >= 0, nextIndex < main.playlist.count else { return nil }
-        return main.playlist[nextIndex]
-    }
+
 
     // MARK: - Preview/Cue Section
 

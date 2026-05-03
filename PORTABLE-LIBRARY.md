@@ -124,19 +124,6 @@ App launches
 
 ---
 
-## Migration for Existing Libraries
-
-Users with an existing library (absolute paths, per-file bookmarks) need a one-time migration:
-
-1. Show "Migrate Library" sheet on first launch after update
-2. Ask user to choose a destination folder (or create one)
-3. Copy all tracked files into `Music/` subfolder
-4. Update each `Track.relativePath` to the new relative path
-5. Move (or recreate) the SwiftData store at the new location
-6. Clear old per-file bookmark data
-
----
-
 ## App Distribution
 
 Since the app is signed with your Apple Developer certificate, it runs on any Mac you own:

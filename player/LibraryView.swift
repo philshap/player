@@ -149,7 +149,6 @@ struct LibraryView: View {
     @State private var selectedTags: Set<String> = []
     @State private var allTagsInLibrary: [String] = []
     @State private var diskSpaceFree: String = ""
-    @State private var showUnmigratedAlert = false
     @State private var pendingAppleMusicURLs: [URL] = []
     @State private var appleMusicFolderURL: URL? = nil
     @State private var showItunesAccessSheet = false
@@ -231,7 +230,6 @@ struct LibraryView: View {
         .onAppear {
             recomputeAllRows()
             refreshDiskSpace()
-            checkForUnmigratedTracks()
         }
         .onChange(of: tracks.count) { oldCount, newCount in
             // Only reset scroll when tracks are added (e.g. import) so the new
@@ -249,11 +247,6 @@ struct LibraryView: View {
                 editingTracks = []
                 recomputeAllRows(resetScroll: false)
             }
-        }
-        .alert("Unmigrated Tracks", isPresented: $showUnmigratedAlert) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Some tracks use the old path format and may not play on another Mac. Use File > Migrate Library to convert them to the portable format.")
         }
         .alert("iTunes Library Access Needed", isPresented: $showItunesAccessSheet) {
             Button("Select iTunes Media Folder") { openItunesMediaPanel() }
@@ -319,22 +312,23 @@ struct LibraryView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(allTagsInLibrary, id: \.self) { tag in
-                    Toggle(
-                        isOn: Binding(
-                            get: { selectedTags.contains(tag) },
-                            set: { if $0 { selectedTags.insert(tag) } else { selectedTags.remove(tag) } }
-                        )
-                    ) {
+                    let isSelected = selectedTags.contains(tag)
+                    Button {
+                        if isSelected { selectedTags.remove(tag) } else { selectedTags.insert(tag) }
+                    } label: {
                         Text(tag)
                     }
-                    .toggleStyle(.button)
+                    .buttonStyle(.bordered)
+                    .tint(isSelected ? .accentColor : nil)
                     .controlSize(.small)
+                    .focusable(false)
                 }
                 if !selectedTags.isEmpty {
                     Button("Clear") { selectedTags.removeAll() }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
                         .font(.callout)
+                        .focusable(false)
                 }
             }
             .padding(.horizontal, 12)
@@ -359,25 +353,21 @@ struct LibraryView: View {
                 if !appState.isPerformanceMode {
                     Button {
                         let name = appState.playlistManager.uniquePlaylistName(base: "New Playlist", among: playlists)
-                        let playlist = appState.playlistManager.createPlaylist(name: name, modelContext: modelContext)
-                        openWindow(id: "playlist", value: playlist.id.uuidString)
+                        appState.playlistManager.createPlaylist(name: name, modelContext: modelContext)
                     } label: {
                         Label("New Playlist", systemImage: "plus")
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                     .dropDestination(for: String.self) { droppedStrings, _ in
-                        let trackIDs = droppedStrings.flatMap { TrackTransfer.decode($0) }
-                        let droppedTracks = tracks.filter { trackIDs.contains($0.id) }
+                        let droppedTracks = TrackTransfer.tracks(from: droppedStrings, in: tracks)
                         guard !droppedTracks.isEmpty else { return false }
                         let baseName = droppedTracks.count == 1
                             ? droppedTracks[0].title
                             : "New Playlist"
                         let name = appState.playlistManager.uniquePlaylistName(base: baseName, among: playlists)
                         let playlist = appState.playlistManager.createPlaylist(name: name, modelContext: modelContext)
-                        for track in droppedTracks {
-                            appState.playlistManager.addTrack(track, to: playlist, modelContext: modelContext)
-                        }
+                        appState.playlistManager.addTracks(droppedTracks, to: playlist, modelContext: modelContext)
                         openWindow(id: "playlist", value: playlist.id.uuidString)
                         return true
                     }
@@ -515,9 +505,7 @@ struct LibraryView: View {
                 Menu("Add to Playlist") {
                     ForEach(playlists) { playlist in
                         Button(playlist.name) {
-                            for track in selectedTracks {
-                                appState.playlistManager.addTrack(track, to: playlist, modelContext: modelContext)
-                            }
+                            appState.playlistManager.addTracks(selectedTracks, to: playlist, modelContext: modelContext)
                         }
                     }
                     if playlists.isEmpty {
@@ -619,13 +607,6 @@ struct LibraryView: View {
             formatter.allowedUnits = [.useGB, .useMB]
             formatter.countStyle = .file
             diskSpaceFree = formatter.string(fromByteCount: bytes)
-        }
-    }
-
-    private func checkForUnmigratedTracks() {
-        let unmigratedCount = tracks.filter { $0.relativePath.isEmpty }.count
-        if unmigratedCount > 0 {
-            showUnmigratedAlert = true
         }
     }
 
@@ -845,11 +826,8 @@ private struct PlaylistSidebarRow: View {
                 .fill(isDropTargeted ? Color.accentColor.opacity(0.2) : .clear)
         )
         .dropDestination(for: String.self) { droppedStrings, _ in
-            let trackIDs = droppedStrings.flatMap { TrackTransfer.decode($0) }
-            let droppedTracks = tracks.filter { trackIDs.contains($0.id) }
-            for track in droppedTracks {
-                appState.playlistManager.addTrack(track, to: playlist, modelContext: modelContext)
-            }
+            let droppedTracks = TrackTransfer.tracks(from: droppedStrings, in: tracks)
+            appState.playlistManager.addTracks(droppedTracks, to: playlist, modelContext: modelContext)
             return !droppedTracks.isEmpty
         } isTargeted: { targeted in
             isDropTargeted = targeted

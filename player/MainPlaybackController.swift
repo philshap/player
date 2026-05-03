@@ -38,6 +38,9 @@ final class MainPlaybackController: PlaybackController {
 
     // MARK: - Play-Count Tracking
 
+    /// When `false`, `recordPlayIfNeeded` is a no-op. Set by `AppState` to mirror performance mode.
+    var recordsPlayStats: Bool = false
+
     /// Set to `true` once the current track's play has been recorded. Reset when a new
     /// track starts. Prevents the same track being counted more than once regardless of
     /// how many completion callbacks fire.
@@ -92,6 +95,8 @@ final class MainPlaybackController: PlaybackController {
     private func preloadFirstTrack() {
         guard !playlist.isEmpty else { return }
         playTrack(playlist[0], startPlayback: false)
+        // Mark as recorded so playTrack(at:) doesn't count a preloaded-but-unplayed track.
+        currentTrackPlayRecorded = true
     }
 
     // MARK: - Transport
@@ -132,6 +137,14 @@ final class MainPlaybackController: PlaybackController {
         let next = currentTrackIndex + 1
         guard next < playlist.count else { stop(); return }
         playTrack(at: next, startPlayback: wasPlaying)
+    }
+
+    var upcomingTrack: Track? {
+        guard !playlist.isEmpty else { return nil }
+        if currentTrack == nil { return playlist.first }
+        let next = currentTrackIndex + 1
+        guard next < playlist.count else { return nil }
+        return playlist[next]
     }
 
     func previousTrack() {
@@ -239,7 +252,7 @@ final class MainPlaybackController: PlaybackController {
     // MARK: - Play Count Tracking
 
     private func recordPlayIfNeeded() {
-        guard let track = currentTrack, !currentTrackPlayRecorded else { return }
+        guard recordsPlayStats, let track = currentTrack, !currentTrackPlayRecorded else { return }
         currentTrackPlayRecorded = true
         track.playCount      += 1
         track.lastPlayedDate  = Date()

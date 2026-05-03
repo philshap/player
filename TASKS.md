@@ -5,15 +5,29 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 
 ## High Priority
 
-### Misc bugs / features
-
-- log contains messages "MP4_BoxParser_Meta.cpp:516    Failed to read child box header", "MP4_BoxParser.cpp:1087   DataSource read failed", if these are benign, can they be silenced?
-
-### Code cleanups
+### Misc
+- allow multiple seleection in playlist window
+- in player window, use performance UI for non-performance main playback
+- track art lookup in itunes should use album as well as artist and title, if track has album set
+- when dragging a selection of tracks onto the "New Playlist" button, there's no postiive drop feedback on the New Playlist button
 
 ---
 
 ## Medium Priority / Medium Difficulty
+
+### Composite filtering in Library
+- use a filter rule to limit library view, which can combine text search, tags and other attribute filters
+- Possibly fold tag search into this filter view, use an expandable header area
+- for numeric files, support uspper / lower bounds
+- for dates, support before / after
+- for text, support contains / does not contain
+- no need to support multiple filters on the same attribute, but could allow it if makes filtering more general
+- example filter tasks are "BPM greater than X and less than Y", "Play count less then X", "Last Played date before X"
+- Once done, may want a way to save / load named filters
+
+### Keep updating playback position display while mouse is pressed
+- Position display stops running on mouse down and "jumps" on mouse up, such as on a menu item
+- Nice to have; if this requires major changes it may not be worth doing
 
 ### Audio Level Display
 - Using bar graph or analog-style VU meter, show audio playback level for both playback channels
@@ -22,6 +36,7 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 - Route main and preview to specific audio output devices
 - Support USB soundcards (e.g. Traktor Audio 2)
 - Would need AVAudioEngine output node configuration per device
+
 
 ---
 
@@ -35,8 +50,6 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 ---
 
 ## Low Priority / Low Difficulty
-
-- remove support for non-directory libraries. Or, add it back as an option to select so user can choose which model they want
 
 
 ### Keyboard Shortcut Expansion

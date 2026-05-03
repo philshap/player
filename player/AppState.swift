@@ -15,7 +15,9 @@ enum AppMode: String, CaseIterable {
 /// Centralized app state holding shared services, library folder management, and mode.
 @Observable
 final class AppState {
-    var mode: AppMode = .curation
+    var mode: AppMode = .curation {
+        didSet { mainPlayback.recordsPlayStats = (mode == .performance) }
+    }
 
     /// The ID of the playlist currently loaded for performance playback.
     var performingPlaylistID: UUID? = nil
@@ -51,12 +53,6 @@ final class AppState {
     /// Controls the welcome/onboarding sheet visibility.
     var showWelcomeSheet: Bool = false
 
-    /// True when an old-style library store exists (pre-portable-feature) and hasn't been migrated.
-    private(set) var hasOldLibrary: Bool = false
-
-    /// The URL of the old default SwiftData store (used for migration).
-    private(set) var oldStoreURL: URL? = nil
-
     // MARK: - Init
 
     init() {
@@ -76,13 +72,6 @@ final class AppState {
     // MARK: - Library Resolution
 
     private func resolveExistingLibrary() {
-        // Check for old default store from pre-portable-feature installs
-        let legacyConfig = ModelConfiguration("player", isStoredInMemoryOnly: false)
-        if FileManager.default.fileExists(atPath: legacyConfig.url.path) {
-            oldStoreURL = legacyConfig.url
-            hasOldLibrary = true
-        }
-
         guard let bookmarkData = UserDefaults.standard.data(forKey: "libraryFolderBookmark") else {
             showWelcomeSheet = true
             return
@@ -136,110 +125,6 @@ final class AppState {
         let _ = folderURL.startAccessingSecurityScopedResource()
         try storeBookmark(for: folderURL)
         try loadLibrary(at: folderURL)
-    }
-
-    // MARK: - Migration
-
-    /// Migrates an old-style library (absolute paths + per-file bookmarks, default SwiftData store)
-    /// to a new portable library folder. Copies all reachable audio files into `Music/`,
-    /// recreates track records with relative paths, and saves the new store at the destination.
-    func migrateOldLibrary(to newFolderURL: URL) async throws {
-        guard let storeURL = oldStoreURL else { return }
-
-        let _ = newFolderURL.startAccessingSecurityScopedResource()
-
-        // Open the old store read-only to extract track data
-        let schema = Schema([Track.self, Playlist.self])
-        let oldConfig = ModelConfiguration(url: storeURL)
-        let oldContainer = try ModelContainer(for: schema, configurations: [oldConfig])
-        let oldContext = ModelContext(oldContainer)
-
-        let allTracks = try oldContext.fetch(FetchDescriptor<Track>())
-        let allPlaylists = try oldContext.fetch(FetchDescriptor<Playlist>())
-
-        // Prepare destination
-        let musicFolder = newFolderURL.appending(path: "Music")
-        try FileManager.default.createDirectory(at: musicFolder, withIntermediateDirectories: true)
-
-        // Copy files and collect mapping: old track ID → new relative path
-        var relativePathByID: [UUID: String] = [:]
-        for track in allTracks {
-            let sourceURL = track.accessibleURL()
-            guard FileManager.default.fileExists(atPath: sourceURL.path) else {
-                print("[Migration] File not found, skipping: \(track.title)")
-                continue
-            }
-            let destURL = uniqueDestinationURL(in: musicFolder, for: sourceURL)
-            do {
-                try FileManager.default.copyItem(at: sourceURL, to: destURL)
-                relativePathByID[track.id] = "Music/\(destURL.lastPathComponent)"
-            } catch {
-                print("[Migration] Failed to copy \(track.title): \(error)")
-            }
-        }
-
-        // Create new store
-        let newStoreURL = newFolderURL.appending(path: "library.sqlite")
-        let newConfig = ModelConfiguration(url: newStoreURL)
-        let newContainer = try ModelContainer(for: schema, configurations: [newConfig])
-        let newContext = ModelContext(newContainer)
-
-        // Re-create tracks in new store
-        var newTrackByOldID: [UUID: Track] = [:]
-        for track in allTracks {
-            guard let relativePath = relativePathByID[track.id] else { continue }
-            let newTrack = Track(
-                relativePath: relativePath,
-                fileURL: newFolderURL.appending(path: relativePath),
-                title: track.title,
-                artist: track.artist,
-                album: track.album,
-                duration: track.duration,
-                bpm: track.bpm,
-                rating: track.rating,
-                cuePointIn: track.cuePointIn,
-                cuePointOut: track.cuePointOut
-            )
-            newTrack.artworkData = track.artworkData
-            newTrack.playCount = track.playCount
-            newTrack.lastPlayedDate = track.lastPlayedDate
-            newTrack.dateAdded = track.dateAdded
-            newContext.insert(newTrack)
-            newTrackByOldID[track.id] = newTrack
-        }
-
-        // Re-create playlists and track relationships
-        for playlist in allPlaylists {
-            let newPlaylist = Playlist(name: playlist.name)
-            newPlaylist.dateCreated = playlist.dateCreated
-            newContext.insert(newPlaylist)
-            for track in playlist.tracks {
-                guard let newTrack = newTrackByOldID[track.id] else { continue }
-                newPlaylist.tracks.append(newTrack)
-            }
-        }
-
-        try newContext.save()
-
-        // Switch to new library
-        try storeBookmark(for: newFolderURL)
-        self.modelContainer = newContainer
-        self.libraryFolderURL = newFolderURL
-        self.showWelcomeSheet = false
-        self.hasOldLibrary = false
-    }
-
-    /// Returns a URL in `folder` that doesn't conflict with existing files.
-    private func uniqueDestinationURL(in folder: URL, for sourceURL: URL) -> URL {
-        let base = sourceURL.deletingPathExtension().lastPathComponent
-        let ext = sourceURL.pathExtension
-        var candidate = folder.appending(path: sourceURL.lastPathComponent)
-        var counter = 2
-        while FileManager.default.fileExists(atPath: candidate.path) {
-            candidate = folder.appending(path: "\(base) (\(counter)).\(ext)")
-            counter += 1
-        }
-        return candidate
     }
 
     // MARK: - iTunes Media Access

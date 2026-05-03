@@ -69,8 +69,6 @@ If a gap is configured (`gapDuration > 0`), a repeating `Timer` handles the coun
 
 The library is a self-contained folder (`library.sqlite` + `Music/` subfolder). `AppState` stores a single folder-level security-scoped bookmark in `UserDefaults` (`"libraryFolderBookmark"`). Tracks store `relativePath` (e.g. `"Music/Artist - Title.mp3"`) and resolve their file URL at runtime via `Track.accessibleURL(libraryFolderURL:)`.
 
-Old-style libraries (absolute paths + per-file bookmarks, pre-portable) are detected by the presence of the default SwiftData store and can be migrated via `AppState.migrateOldLibrary(to:)`.
-
 ### Playlist Change Observation
 
 `PlaylistManager` posts `.playlistDidChange` notifications (with `playlistID` in userInfo) whenever a playlist is mutated. `MainPlaybackController` observes these to keep its in-memory `[Track]` array in sync with the SwiftData model and to invalidate/restart prefetch when the playlist is reordered while playing.

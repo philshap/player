@@ -23,6 +23,14 @@ final class PlaylistManager {
         return "\(base) \(counter)"
     }
 
+    /// Creates a uniquely named playlist, fetching existing names from the model context.
+    @discardableResult
+    func createNewPlaylist(modelContext: ModelContext) -> Playlist {
+        let existing = (try? modelContext.fetch(FetchDescriptor<Playlist>())) ?? []
+        let name = uniquePlaylistName(base: "New Playlist", among: existing)
+        return createPlaylist(name: name, modelContext: modelContext)
+    }
+
     @discardableResult
     func createPlaylist(name: String, modelContext: ModelContext) -> Playlist {
         let playlist = Playlist(name: name)
@@ -42,6 +50,19 @@ final class PlaylistManager {
     // MARK: - Track Management
 
     func addTrack(_ track: Track, to playlist: Playlist, modelContext _: ModelContext) {
+        insertTrack(track, into: playlist)
+        playlist.dateModified = Date()
+        notify(playlist)
+    }
+
+    func addTracks(_ tracks: [Track], to playlist: Playlist, modelContext _: ModelContext) {
+        guard !tracks.isEmpty else { return }
+        for track in tracks { insertTrack(track, into: playlist) }
+        playlist.dateModified = Date()
+        notify(playlist)
+    }
+
+    private func insertTrack(_ track: Track, into playlist: Playlist) {
         if let existingIndex = playlist.tracks.firstIndex(where: { $0.id == track.id }) {
             // Disallow duplicates; move existing track to the end of the playlist.
             let existingTrack = playlist.tracks.remove(at: existingIndex)
@@ -49,8 +70,6 @@ final class PlaylistManager {
         } else {
             playlist.tracks.append(track)
         }
-        playlist.dateModified = Date()
-        notify(playlist)
     }
 
     func removeTrack(at index: Int, from playlist: Playlist, modelContext _: ModelContext) {
