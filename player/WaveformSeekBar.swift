@@ -19,6 +19,9 @@ struct WaveformSeekBar: View {
     let onEndSeek: () -> Void
 
     @State private var isDragging = false
+    @State private var dragTime: TimeInterval = 0
+
+    private var displayTime: TimeInterval { isDragging ? dragTime : currentTime }
 
     var body: some View {
         GeometryReader { proxy in
@@ -35,6 +38,7 @@ struct WaveformSeekBar: View {
                             isDragging = true
                             onBeginSeek()
                         }
+                        dragTime = time
                         onSeek(time)
                     }
                     .onEnded { _ in
@@ -50,7 +54,7 @@ struct WaveformSeekBar: View {
         let midY      = size.height / 2
         let maxAmp    = midY * 0.88
         let minHalf   : CGFloat = 1.5
-        let fraction  : CGFloat = duration > 0 ? CGFloat(currentTime / duration) : 0
+        let fraction  : CGFloat = duration > 0 ? CGFloat(displayTime / duration) : 0
         let playheadX = (fraction * size.width).clamped(to: 0...size.width)
 
         guard let data = waveformData else {
