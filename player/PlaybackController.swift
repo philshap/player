@@ -581,9 +581,10 @@ class PlaybackController {
 
     func startPositionTimer() {
         stopPositionTimer()
-        positionTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+        positionTimer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
             self?.updatePosition()
         }
+        RunLoop.main.add(positionTimer!, forMode: .common)
     }
 
     func stopPositionTimer() {
