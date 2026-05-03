@@ -15,6 +15,8 @@ struct PlaylistWindowView: View {
 
     @Environment(\.dismiss) private var dismiss
 
+    @Query private var allLibraryTracks: [Track]
+
     @State private var isRenaming = false
     @State private var renameText = ""
     @State private var showDeleteConfirmation = false
@@ -92,6 +94,22 @@ struct PlaylistWindowView: View {
                 toolbarContent(playlist)
             }
         }
+        .focusedValue(\.focusedPlaylist, playlist)
+        .focusedValue(\.playlistImportHandler, { [allLibraryTracks, modelContext] exportData in
+            let (_, unmatchedCount) = PlaylistIO.importPlaylist(
+                from: exportData,
+                libraryTracks: allLibraryTracks,
+                modelContext: modelContext,
+                playlistManager: appState.playlistManager
+            )
+            if unmatchedCount > 0 {
+                let alert = NSAlert()
+                alert.messageText = "Playlist Imported with Gaps"
+                alert.informativeText = "\(unmatchedCount) track\(unmatchedCount == 1 ? "" : "s") could not be found in your library and were skipped."
+                alert.alertStyle = .informational
+                alert.runModal()
+            }
+        })
         .sheet(isPresented: $isRenaming) {
             renameSheet(playlist)
         }

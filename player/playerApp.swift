@@ -51,6 +51,8 @@ struct playerApp: App {
                 .keyboardShortcut("N", modifiers: [.command])
             }
 
+            PlaylistCommands()
+
             // Window commands
             CommandGroup(after: .newItem) {
                 Button("Open Library") {
