@@ -191,6 +191,12 @@ final class LibraryManager {
             }
         }
 
+        // Remove from trackOrder on every playlist that contains this track, before the
+        // cascade delete wipes the inverse relationship and we lose the association.
+        for playlist in track.playlists {
+            playlist.trackOrder.removeAll { $0 == track.id }
+        }
+
         modelContext.delete(track)
     }
 

@@ -45,11 +45,6 @@
 			path = playerTests;
 			sourceTree = "<group>";
 		};
-		4A1B58EF2F85B91800276FDB /* playerUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = playerUITests;
-			sourceTree = "<group>";
-		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -85,7 +80,6 @@
 				4AD05B6B2F8ABF0E00816D85 /* TASKS.md */,
 				4A1B58D72F85B91700276FDB /* player */,
 				4A1B58E52F85B91800276FDB /* playerTests */,
-				4A1B58EF2F85B91800276FDB /* playerUITests */,
 				4A1B58D62F85B91700276FDB /* Products */,
 				4AC554C52F8D9E2500723199 /* PORTABLE-LIBRARY.md */,
 				4A9F1A012F85B91700276FDB /* .github */,
@@ -178,9 +172,6 @@
 			);
 			dependencies = (
 				4A1B58EE2F85B91800276FDB /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				4A1B58EF2F85B91800276FDB /* playerUITests */,
 			);
 			name = playerUITests;
 			packageProductDependencies = (

@@ -81,6 +81,17 @@ final class Playlist {
     @Relationship(inverse: \Track.playlists)
     var tracks: [Track] = []
 
+    /// Authoritative track ordering. Core Data's many-to-many relationship does not
+    /// reliably persist array order across save/fetch cycles, so we store UUIDs here.
+    var trackOrder: [UUID] = []
+
+    /// Tracks in their correct display/playback order.
+    var orderedTracks: [Track] {
+        if trackOrder.isEmpty { return tracks }
+        let map = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
+        return trackOrder.compactMap { map[$0] }
+    }
+
     init(name: String) {
         self.id = UUID()
         self.name = name

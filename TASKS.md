@@ -7,7 +7,7 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 
 ### Misc
 - allow multiple seleection in playlist window
-- in player window, use performance UI for non-performance main playback
+- in player window, show "up next" UI for non-performance main playback
 - track art lookup in itunes should use album as well as artist and title, if track has album set
 - when dragging a selection of tracks onto the "New Playlist" button, there's no postiive drop feedback on the New Playlist button
 
@@ -24,10 +24,6 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 - no need to support multiple filters on the same attribute, but could allow it if makes filtering more general
 - example filter tasks are "BPM greater than X and less than Y", "Play count less then X", "Last Played date before X"
 - Once done, may want a way to save / load named filters
-
-### Keep updating playback position display while mouse is pressed
-- Position display stops running on mouse down and "jumps" on mouse up, such as on a menu item
-- Nice to have; if this requires major changes it may not be worth doing
 
 ### Audio Level Display
 - Using bar graph or analog-style VU meter, show audio playback level for both playback channels

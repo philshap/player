@@ -77,7 +77,7 @@ final class MainPlaybackController: PlaybackController {
     func loadPlaylist(_ playlistModel: Playlist) {
         stop()
         activePlaylistModel = playlistModel
-        playlist = playlistModel.tracks
+        playlist = playlistModel.orderedTracks
         startPlaylistChangeObserver()
         preloadFirstTrack()
     }
@@ -128,7 +128,6 @@ final class MainPlaybackController: PlaybackController {
 
     func nextTrack() {
         cancelGap()
-        refreshPlaylistFromActiveModel()
         if currentTrack == nil {
             if !playlist.isEmpty { play() }
             return
@@ -148,7 +147,6 @@ final class MainPlaybackController: PlaybackController {
     }
 
     func previousTrack() {
-        refreshPlaylistFromActiveModel()
         if currentTrack == nil {
             if !playlist.isEmpty { play() }
             return
@@ -197,10 +195,6 @@ final class MainPlaybackController: PlaybackController {
 
     /// Auto-advances after a track ends naturally.
     private func autoAdvance() {
-        // Re-read the authoritative playlist before deciding what to do.
-        // Guards against races between model notifications and completion callbacks.
-        refreshPlaylistFromActiveModel()
-
         let next = currentTrackIndex + 1
         if next < playlist.count {
             if gapDuration > 0 {
@@ -313,10 +307,12 @@ final class MainPlaybackController: PlaybackController {
             playlistChangeObserver = nil
         }
         guard activePlaylistModel != nil else { return }
+        // queue: nil delivers synchronously on the posting thread (always main),
+        // so self.playlist is up-to-date before notify() returns.
         playlistChangeObserver = NotificationCenter.default.addObserver(
             forName: .playlistDidChange,
             object: nil,
-            queue: .main
+            queue: nil
         ) { [weak self] notification in
             guard let self,
                   let playlistID = notification.userInfo?["playlistID"] as? UUID,
@@ -327,7 +323,7 @@ final class MainPlaybackController: PlaybackController {
 
     private func syncPlaylistFromModel() {
         guard let model = activePlaylistModel else { return }
-        let newTracks = model.tracks
+        let newTracks = model.orderedTracks
         playlist = newTracks
 
         if let currentID = currentTrack?.id,
@@ -344,18 +340,6 @@ final class MainPlaybackController: PlaybackController {
             if nextIndex < playlist.count {
                 prefetchNext(index: nextIndex, generation: playbackGeneration)
             }
-        }
-    }
-
-    /// Synchronously refreshes playlist order/index from the authoritative model.
-    /// Used by manual transport actions so they see reorder changes immediately,
-    /// even if a notification is still queued on the run loop.
-    private func refreshPlaylistFromActiveModel() {
-        guard let model = activePlaylistModel else { return }
-        playlist = model.tracks
-        if let currentID = currentTrack?.id,
-           let newIndex = playlist.firstIndex(where: { $0.id == currentID }) {
-            currentTrackIndex = newIndex
         }
     }
 

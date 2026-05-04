@@ -54,7 +54,7 @@ extension FocusedValues {
 enum PlaylistIO {
 
     static func makeExportData(for playlist: Playlist) -> PlaylistExportData {
-        let tracks = playlist.tracks
+        let tracks = playlist.orderedTracks
         let bpms = tracks.compactMap(\.bpm).filter { $0 > 0 }
         let ratings = tracks.map(\.rating).filter { $0 > 0 }
 

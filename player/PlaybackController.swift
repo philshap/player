@@ -13,9 +13,6 @@
 @preconcurrency import AVFoundation
 import Foundation
 import Observation
-import os.log
-
-private let seekLog = OSLog(subsystem: "com.player", category: "seek")
 
 /// Controls playback on a single player-node + mixer pair.
 ///
