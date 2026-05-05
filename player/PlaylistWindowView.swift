@@ -120,6 +120,7 @@ struct PlaylistWindowView: View {
         ) {
             Button("Delete", role: .destructive) {
                 appState.playlistManager.deletePlaylist(playlist, modelContext: modelContext)
+                dismiss()
             }
             Button("Cancel", role: .cancel) {}
         } message: {
