@@ -53,6 +53,15 @@ struct playerApp: App {
 
             PlaylistCommands()
 
+            // Override Edit > Find so Cmd+F focuses the Library search field
+            // instead of opening Table's built-in find bar.
+            CommandGroup(replacing: .textEditing) {
+                Button("Find…") {
+                    NotificationCenter.default.post(name: .focusLibrarySearch, object: nil)
+                }
+                .keyboardShortcut("f", modifiers: .command)
+            }
+
             // Window commands
             CommandGroup(after: .newItem) {
                 Button("Open Library") {

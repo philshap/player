@@ -189,6 +189,9 @@ struct LibraryView: View {
                 .allowsHitTesting(false)
         )
         .searchable(text: $searchText, prompt: "Search by title, artist, or album")
+        .onReceive(NotificationCenter.default.publisher(for: .focusLibrarySearch)) { _ in
+            focusSearchField()
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -577,6 +580,25 @@ struct LibraryView: View {
 
     // MARK: - Actions
 
+    private func focusSearchField() {
+        DispatchQueue.main.async {
+            for window in NSApp.windows where window.isKeyWindow {
+                for item in window.toolbar?.items ?? [] {
+                    // SwiftUI's .searchable() creates an NSSearchToolbarItem on macOS 12+
+                    if let searchItem = item as? NSSearchToolbarItem {
+                        window.makeFirstResponder(searchItem.searchField)
+                        return
+                    }
+                    // Fallback: plain NSSearchField in a generic toolbar item
+                    if let searchField = item.view as? NSSearchField {
+                        window.makeFirstResponder(searchField)
+                        return
+                    }
+                }
+            }
+        }
+    }
+
     private func editMetadataForSelection() {
         let ordered = displayedRows
             .filter { selectedTrackIDs.contains($0.id) }
@@ -731,6 +753,12 @@ struct LibraryView: View {
         }
     }
 
+}
+
+// MARK: - Notification Names
+
+extension Notification.Name {
+    static let focusLibrarySearch = Notification.Name("player.focusLibrarySearch")
 }
 
 // MARK: - Track Artwork View
