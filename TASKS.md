@@ -9,7 +9,7 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 - allow multiple seleection in playlist window
 - in player window, show "up next" UI for non-performance main playback
 - track art lookup in itunes should use album as well as artist and title, if track has album set
-- when dragging a selection of tracks onto the "New Playlist" button, there's no postiive drop feedback on the New Playlist button
+- when dragging a selection of tracks onto the "New Playlist" button, there's no drop feedback on the New Playlist button
 
 ---
 
@@ -53,9 +53,6 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 - Jump to cue in/out via keyboard
 - Load selected library track into preview
 - These shortcuts exist in menus but may need refinement
-
-### UI Polish
-- Nicer playback controller with icons/graphics, maybe larger buttons
 
 ---
 
