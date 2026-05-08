@@ -265,7 +265,10 @@ final class MainPlaybackController: PlaybackController {
         let format    = audioEngine.playerFormat!
         let channel   = outputChannel
 
-        prefetchTask = Task.detached(priority: .userInitiated) { [weak self] in
+        // .utility (below default) avoids a Thread Performance Checker priority
+        // inversion: AVAudioFile.read internally waits on default-QoS threads,
+        // and a higher-QoS task waiting on a lower-QoS one trips the warning.
+        prefetchTask = Task.detached(priority: .utility) { [weak self] in
             guard let self else { return }
             do {
                 let fullBuffer = try AudioEngineManager.loadBuffer(

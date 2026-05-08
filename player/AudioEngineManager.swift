@@ -48,7 +48,8 @@ final class AudioEngineManager {
 
     /// The PCM format used for all player-node buffer scheduling.
     /// Derived from the engine's hardware output; all loaded buffers are converted to this.
-    private(set) var playerFormat: AVAudioFormat!
+    /// Module-internal setter so tests can drive simulated configuration changes.
+    var playerFormat: AVAudioFormat!
 
     // MARK: - Registry
 

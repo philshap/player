@@ -445,26 +445,49 @@ class PlaybackController {
     func handleEngineConfigurationChange() {
         wasPlayingBeforeConfigChange = isPlaying
         isPlaying = false
-        pendingSeek?.cancel()
-        pendingSeek = nil
+        // Bump generation so any in-flight buffer completion or prefetch task
+        // captured against the pre-change generation is discarded as stale.
+        playbackGeneration += 1
         stopPlayer()
         audioEngine.connect(player: player, mixer: mixer)
     }
 
     /// Called by `AudioEngineManager` after `engine.start()` succeeds.
-    /// Re-schedules and resumes playback if the controller was playing before the
-    /// config change, provided the buffer format still matches the new player format.
+    ///
+    /// The engine's pre-notification internal stop drops any scheduled buffer
+    /// on the player node. Re-schedule the loaded track here so that subsequent
+    /// `resume()` calls have a buffer to play. Whether playback restarts
+    /// immediately or stays parked depends on `wasPlayingBeforeConfigChange`:
+    /// playing → resume from `currentTime`; paused → re-schedule parked so the
+    /// user's pause state is preserved.
     func resumeAfterEngineRestart() {
-        guard wasPlayingBeforeConfigChange else { return }
+        let wasPlaying = wasPlayingBeforeConfigChange
         wasPlayingBeforeConfigChange = false
-        guard let track = currentTrack,
-              let buffer = currentFullBuffer,
-              buffer.format.sampleRate == audioEngine.playerFormat?.sampleRate else {
-            // Format changed or no track loaded — user must press play again.
+        guard let track = currentTrack else { return }
+
+        // Fast path: existing buffer's rate matches the new player format.
+        if let buffer = currentFullBuffer,
+           buffer.format.sampleRate == audioEngine.playerFormat?.sampleRate {
+            applySlice(from: buffer, track: track, position: currentTime,
+                       generation: playbackGeneration, startPlayback: wasPlaying)
             return
         }
-        applySlice(from: buffer, track: track, position: currentTime,
-                   generation: playbackGeneration, startPlayback: true)
+
+        // Sample rate changed: reload the buffer at the new format from the
+        // current position. Generation has already been bumped in
+        // handleEngineConfigurationChange; reuse it so the load's completion
+        // matches a single coherent attempt.
+        let savedTime = currentTime
+        let gen = playbackGeneration
+        currentFullBuffer = nil
+        willStartTrack(track, generation: gen)
+        loadBuffer(for: track, generation: gen) { [weak self] buffer in
+            guard let self else { return }
+            self.currentFullBuffer = buffer
+            if self.waveformData == nil { self.triggerWaveformAnalysis(buffer: buffer, track: track) }
+            self.applySlice(from: buffer, track: track, position: savedTime,
+                            generation: gen, startPlayback: wasPlaying)
+        }
     }
 
     // MARK: - Slicing & Scheduling
@@ -543,7 +566,10 @@ class PlaybackController {
         let channel  = outputChannel
         guard let format = audioEngine.playerFormat else { return }
 
-        loadTask = Task.detached(priority: .userInitiated) { [weak self] in
+        // .utility (below default) avoids a Thread Performance Checker priority
+        // inversion: AVAudioFile.read internally waits on default-QoS threads,
+        // and a higher-QoS task waiting on a lower-QoS one trips the warning.
+        loadTask = Task.detached(priority: .utility) { [weak self] in
             guard let self else { return }
             do {
                 let buffer = try AudioEngineManager.loadBuffer(
@@ -567,9 +593,20 @@ class PlaybackController {
     /// Internal completion dispatcher — called from the audio thread via the
     /// scheduleBuffer callback. Hops to main, checks the generation, and forwards
     /// to `onTrackCompletion(generation:)` (overridable).
+    ///
+    /// `.dataPlayedBack` fires both on natural buffer end *and* when the engine
+    /// stops out from under the player — including when AVAudioEngine internally
+    /// stops itself ahead of an `AVAudioEngineConfigurationChange`. In the latter
+    /// case the audio-thread callback is dispatched to main *before* the config-
+    /// change notification handler runs, so the generation guard alone is still
+    /// satisfied. Distinguish the two by also checking `engine.isRunning`:
+    /// natural completions fire with the engine still running; forced stops fire
+    /// after the engine has gone idle.
     func handleTrackCompletion(generation gen: Int) {
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.playbackGeneration == gen else { return }
+            guard let self,
+                  self.playbackGeneration == gen,
+                  self.audioEngine.engine.isRunning else { return }
             self.onTrackCompletion(generation: gen)
         }
     }
