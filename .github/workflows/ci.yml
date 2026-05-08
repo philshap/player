@@ -31,7 +31,7 @@ jobs:
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
           NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
           echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
-          xcrun agvtool new-marketing-version "$NEW_VERSION"
+          sed -i '' "s/MARKETING_VERSION = [^;]*/MARKETING_VERSION = $NEW_VERSION/" player.xcodeproj/project.pbxproj
 
       - name: Run tests
         run: |
