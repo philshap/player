@@ -135,7 +135,7 @@ final class LibraryManager {
         if let artwork = metadata.artworkData {
             track.artworkData = artwork
         } else {
-            track.artworkData = fetchiTunesLibraryArtwork(title: metadata.title, artist: metadata.artist)
+            track.artworkData = fetchiTunesLibraryArtwork(title: metadata.title, artist: metadata.artist, album: metadata.album)
         }
 
         modelContext.insert(track)
@@ -176,7 +176,7 @@ final class LibraryManager {
             if let artwork = metadata.artworkData {
                 track.artworkData = artwork
             } else if track.artworkData == nil {
-                track.artworkData = fetchiTunesLibraryArtwork(title: track.title, artist: track.artist)
+                track.artworkData = fetchiTunesLibraryArtwork(title: track.title, artist: track.artist, album: track.album)
             }
         }
     }
@@ -248,7 +248,7 @@ final class LibraryManager {
         )
     }
 
-    private func fetchiTunesLibraryArtwork(title: String, artist: String) -> Data? {
+    private func fetchiTunesLibraryArtwork(title: String, artist: String, album: String = "") -> Data? {
         if iTunesLibrary == nil {
             iTunesLibrary = try? ITLibrary(apiVersion: "1.0")
         }
@@ -258,6 +258,9 @@ final class LibraryManager {
 
         let match = library.allMediaItems.first { item in
             guard item.title.localizedCaseInsensitiveCompare(title) == .orderedSame else { return false }
+            if !album.isEmpty {
+                guard item.album.title?.localizedCaseInsensitiveCompare(album) == .orderedSame else { return false }
+            }
             guard !artist.isEmpty else { return true }
             return item.artist?.name?.localizedCaseInsensitiveContains(artist) == true
         }
