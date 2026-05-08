@@ -5,10 +5,7 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 
 ## High Priority
 
-### Misc
-- add copyright, readme, etc to repo
-- add version, add CI rule to bump version on merge to main branch before CI tests run
-  - maybe create release after successful CI build, and auto-produce change notes based on commit messages?
+_(nothing remaining)_
 
 ---
 
@@ -16,12 +13,10 @@ Organized by difficulty and importance. See TASKS-DONE.md for completed work.
 
 ### Misc
 
-- track art lookup in Apple Music should use album as well as artist and title, if track has album set
-- when dragging a selection of tracks onto the "New Playlist" button, there's no drop feedback on the New Playlist button
 - allow multiple selection in playlist window, for bulk drag and remove operations
-- main and preview player UI album art display overlaps left-hand time display
+- preview player album art display overlaps left-hand time display
 
-### Unify playlist playback display with player
+### Unify playlist playback UX with player UX
   - use player's main controller view directly in playlist, or provide same UI
   - need to add Gap dropdown and gap timing display to player view
 

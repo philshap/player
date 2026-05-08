@@ -9,15 +9,29 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   test-and-build:
     runs-on: macos-26
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Bump version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          VERSION=$(grep -m1 'MARKETING_VERSION' player.xcodeproj/project.pbxproj | awk '{print $3}' | tr -d ';')
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
+          xcrun agvtool new-marketing-version "$NEW_VERSION"
 
       - name: Run tests
         run: |
@@ -55,3 +69,23 @@ jobs:
           name: player-${{ github.sha }}
           path: build/player.zip
           retention-days: 14
+
+      - name: Commit version bump and tag
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add player.xcodeproj/project.pbxproj
+          git commit -m "Bump version to $NEW_VERSION [skip ci]"
+          git tag "v$NEW_VERSION"
+          git push origin main "v$NEW_VERSION"
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          gh release create "v$NEW_VERSION" \
+            build/player.zip \
+            --title "v$NEW_VERSION" \
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
