@@ -152,6 +152,7 @@ struct LibraryView: View {
     @State private var pendingAppleMusicURLs: [URL] = []
     @State private var appleMusicFolderURL: URL? = nil
     @State private var showItunesAccessSheet = false
+    @State private var isNewPlaylistDropTargeted = false
 
     var body: some View {
         mainContent
@@ -362,6 +363,12 @@ struct LibraryView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
+                    .padding(.vertical, 2)
+                    .padding(.horizontal, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(isNewPlaylistDropTargeted ? Color.accentColor.opacity(0.2) : .clear)
+                    )
                     .dropDestination(for: String.self) { droppedStrings, _ in
                         let droppedTracks = TrackTransfer.tracks(from: droppedStrings, in: tracks)
                         guard !droppedTracks.isEmpty else { return false }
@@ -373,6 +380,8 @@ struct LibraryView: View {
                         appState.playlistManager.addTracks(droppedTracks, to: playlist, modelContext: modelContext)
                         openWindow(id: "playlist", value: playlist.id.uuidString)
                         return true
+                    } isTargeted: { targeted in
+                        isNewPlaylistDropTargeted = targeted
                     }
                 }
             }
