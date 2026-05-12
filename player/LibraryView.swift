@@ -593,14 +593,8 @@ struct LibraryView: View {
         DispatchQueue.main.async {
             for window in NSApp.windows where window.isKeyWindow {
                 for item in window.toolbar?.items ?? [] {
-                    // SwiftUI's .searchable() creates an NSSearchToolbarItem on macOS 12+
                     if let searchItem = item as? NSSearchToolbarItem {
                         window.makeFirstResponder(searchItem.searchField)
-                        return
-                    }
-                    // Fallback: plain NSSearchField in a generic toolbar item
-                    if let searchField = item.view as? NSSearchField {
-                        window.makeFirstResponder(searchField)
                         return
                     }
                 }
