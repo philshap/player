@@ -247,17 +247,24 @@ struct PlayerView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                mainDeckSection
-                    .padding(.horizontal, 22)
-                    .padding(.top, 18)
-                    .padding(.bottom, 16)
+                MainDeckView(
+                    controller: appState.mainPlayback,
+                    tint: mainTint,
+                    isPerformanceMode: appState.isPerformanceMode
+                )
+                .padding(.horizontal, 22)
+                .padding(.top, 18)
+                .padding(.bottom, 16)
 
                 Divider()
                     .opacity(0.35)
 
-                previewDeckSection
-                    .padding(.horizontal, 22)
-                    .padding(.vertical, 14)
+                PreviewDeckView(
+                    controller: appState.previewPlayback,
+                    tint: previewTint
+                )
+                .padding(.horizontal, 22)
+                .padding(.vertical, 14)
             }
             .frame(minWidth: 520, minHeight: 380)
             .navigationTitle(appState.isPerformanceMode ? "Player — Performance" : "Player")
@@ -270,27 +277,30 @@ struct PlayerView: View {
             previewTint = tintColor(for: appState.previewPlayback.currentTrack)
         }
     }
+}
 
-    // MARK: - Helpers
+// MARK: - Helpers
 
-    /// Returns the normalized peak amplitude at the controller's current playback position,
-    /// read directly from the already-computed waveform data. Returns 0 when no data is available.
-    private func waveformLevel(_ controller: some PlaybackController) -> Float {
-        guard let data = controller.waveformData,
-              !data.peaks.isEmpty,
-              controller.duration > 0 else { return 0 }
-        let fraction = controller.currentTime / controller.duration
-        let idx = Int(fraction * Double(data.peaks.count)).clamped(to: 0...(data.peaks.count - 1))
-        return data.peaks[idx]
-    }
+private func waveformLevel(_ controller: some PlaybackController) -> Float {
+    guard let data = controller.waveformData,
+          !data.peaks.isEmpty,
+          controller.duration > 0 else { return 0 }
+    let fraction = controller.currentTime / controller.duration
+    let idx = Int(fraction * Double(data.peaks.count)).clamped(to: 0...(data.peaks.count - 1))
+    return data.peaks[idx]
+}
 
-    // MARK: - Main Deck
+// MARK: - Main Deck
 
-    @ViewBuilder
-    private var mainDeckSection: some View {
-        let main = appState.mainPlayback
-        let tint = mainTint
-        let isStereo = main.outputChannel == .both
+private struct MainDeckView: View {
+    let controller: MainPlaybackController
+    let tint: Color
+    let isPerformanceMode: Bool
+
+    private let height: CGFloat = 162
+
+    var body: some View {
+        let isStereo = controller.outputChannel == .both
 
         VStack(spacing: 8) {
             // Channel header (above the waveform block)
@@ -300,10 +310,10 @@ struct PlayerView: View {
                     label: isStereo ? "Main Output (L+R)" : "Main Output (L)",
                     tint: tint,
                     showMeter: true,
-                    meterLevel: waveformLevel(main)
+                    meterLevel: waveformLevel(controller)
                 )
                 Button {
-                    main.outputChannel = isStereo ? .left : .both
+                    controller.outputChannel = isStereo ? .left : .both
                 } label: {
                     Image(systemName: isStereo ? "speaker.2.fill" : "speaker.fill")
                         .font(.caption)
@@ -318,25 +328,25 @@ struct PlayerView: View {
             ZStack {
                 // Layer 0: waveform background (inset so time labels sit in the margins)
                 WaveformSeekBar(
-                    waveformData: main.waveformData,
-                    currentTime: main.currentTime,
-                    duration: max(main.duration, 0.01),
+                    waveformData: controller.waveformData,
+                    currentTime: controller.currentTime,
+                    duration: max(controller.duration, 0.01),
                     tint: tint,
-                    onBeginSeek: { main.beginInteractiveSeek() },
-                    onSeek: { main.seek(to: $0) },
-                    onEndSeek: { main.endInteractiveSeek() }
+                    onBeginSeek: { controller.beginInteractiveSeek() },
+                    onSeek: { controller.seek(to: $0) },
+                    onEndSeek: { controller.endInteractiveSeek() }
                 )
                 .padding(.horizontal, 48)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 // Layer 1: time labels at vertical center, in the left/right margins
                 HStack {
-                    Text(main.currentTime.mmss())
+                    Text(controller.currentTime.mmss())
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(tint)
                         .frame(width: 46, alignment: .trailing)
                     Spacer()
-                    Text(main.duration.mmss())
+                    Text(controller.duration.mmss())
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(.secondary.opacity(0.5))
                         .frame(width: 46, alignment: .leading)
@@ -349,17 +359,17 @@ struct PlayerView: View {
                     // Track info
                     HStack(alignment: .center, spacing: 14) {
                         TrackArtworkView(
-                            data: main.currentTrack?.artworkData,
+                            data: controller.currentTrack?.artworkData,
                             size: 60
                         )
                         VStack(alignment: .leading, spacing: 5) {
-                            Text(main.currentTrack?.title ?? "No track loaded")
+                            Text(controller.currentTrack?.title ?? "No track loaded")
                                 .font(.system(size: 21, weight: .semibold))
                                 .tracking(-0.3)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
-                                .foregroundStyle(main.currentTrack != nil ? .primary : .secondary)
-                            if let track = main.currentTrack {
+                                .foregroundStyle(controller.currentTrack != nil ? .primary : .secondary)
+                            if let track = controller.currentTrack {
                                 HStack(spacing: 8) {
                                     if !track.artist.isEmpty {
                                         Text(track.artist)
@@ -378,8 +388,8 @@ struct PlayerView: View {
                         .padding(.vertical, 5)
                         .background(.black.opacity(0.52), in: RoundedRectangle(cornerRadius: 6))
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        if appState.isPerformanceMode {
-                            UpNextCard(track: main.upcomingTrack)
+                        if isPerformanceMode {
+                            UpNextCard(track: controller.upcomingTrack)
                                 .frame(width: 220)
                         }
                     }
@@ -393,28 +403,28 @@ struct PlayerView: View {
                         HStack(spacing: 4) {
                             TransportButton(
                                 icon: "backward.fill",
-                                action: { main.previousTrack() },
+                                action: { controller.previousTrack() },
                                 size: 30, tint: tint
                             )
                             TransportButton(
                                 icon: "arrow.counterclockwise",
-                                action: { main.seek(to: 0) },
+                                action: { controller.seek(to: 0) },
                                 size: 30, tint: tint,
-                                isDisabled: main.currentTrack == nil
+                                isDisabled: controller.currentTrack == nil
                             )
                             TransportButton(
-                                icon: main.isPlaying ? "pause.fill" : "play.fill",
-                                action: { main.togglePlayPause() },
+                                icon: controller.isPlaying ? "pause.fill" : "play.fill",
+                                action: { controller.togglePlayPause() },
                                 isPrimary: true, size: 40, tint: tint
                             )
                             TransportButton(
                                 icon: "forward.fill",
-                                action: { main.nextTrack() },
+                                action: { controller.nextTrack() },
                                 size: 30, tint: tint
                             )
                             TransportButton(
                                 icon: "stop.fill",
-                                action: { main.stop() },
+                                action: { controller.stop() },
                                 size: 30, tint: tint
                             )
                         }
@@ -422,18 +432,22 @@ struct PlayerView: View {
                     }
                 }
             }
-            .frame(height: mainDeckHeight)
+            .frame(height: height)
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
     }
+}
 
-    // MARK: - Preview Deck
+// MARK: - Preview Deck
 
-    @ViewBuilder
-    private var previewDeckSection: some View {
-        let preview = appState.previewPlayback
-        let tint = previewTint
-        let isStereo = preview.outputChannel == .both
+private struct PreviewDeckView: View {
+    let controller: PreviewPlaybackController
+    let tint: Color
+
+    private let height: CGFloat = 108
+
+    var body: some View {
+        let isStereo = controller.outputChannel == .both
 
         VStack(spacing: 8) {
             // Channel header
@@ -444,7 +458,7 @@ struct PlayerView: View {
                     tint: tint
                 )
                 Button {
-                    preview.outputChannel = isStereo ? .right : .both
+                    controller.outputChannel = isStereo ? .right : .both
                 } label: {
                     Image(systemName: isStereo ? "speaker.2.fill" : "speaker.fill")
                         .font(.caption)
@@ -459,25 +473,25 @@ struct PlayerView: View {
             ZStack {
                 // Layer 0: waveform background (inset so time labels sit in the margins)
                 WaveformSeekBar(
-                    waveformData: preview.waveformData,
-                    currentTime: preview.currentTime,
-                    duration: max(preview.duration, 0.01),
+                    waveformData: controller.waveformData,
+                    currentTime: controller.currentTime,
+                    duration: max(controller.duration, 0.01),
                     tint: tint,
-                    onBeginSeek: { preview.beginInteractiveSeek() },
-                    onSeek: { preview.seek(to: $0) },
-                    onEndSeek: { preview.endInteractiveSeek() }
+                    onBeginSeek: { controller.beginInteractiveSeek() },
+                    onSeek: { controller.seek(to: $0) },
+                    onEndSeek: { controller.endInteractiveSeek() }
                 )
                 .padding(.horizontal, 48)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 // Layer 1: time labels at vertical center, in the left/right margins
                 HStack {
-                    Text(preview.currentTime.mmss())
+                    Text(controller.currentTime.mmss())
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(tint)
                         .frame(width: 46, alignment: .trailing)
                     Spacer()
-                    Text(preview.duration.mmss())
+                    Text(controller.duration.mmss())
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(.secondary.opacity(0.5))
                         .frame(width: 46, alignment: .leading)
@@ -490,16 +504,16 @@ struct PlayerView: View {
                     // Track info
                     HStack(spacing: 12) {
                         TrackArtworkView(
-                            data: preview.currentTrack?.artworkData,
+                            data: controller.currentTrack?.artworkData,
                             size: 48
                         )
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(preview.currentTrack?.title ?? "No track loaded")
+                            Text(controller.currentTrack?.title ?? "No track loaded")
                                 .font(.system(size: 15, weight: .semibold))
                                 .lineLimit(1)
                                 .truncationMode(.tail)
-                                .foregroundStyle(preview.currentTrack != nil ? .primary : .secondary)
-                            if let track = preview.currentTrack {
+                                .foregroundStyle(controller.currentTrack != nil ? .primary : .secondary)
+                            if let track = controller.currentTrack {
                                 HStack(spacing: 6) {
                                     if !track.artist.isEmpty {
                                         Text(track.artist)
@@ -528,13 +542,13 @@ struct PlayerView: View {
                     VStack(spacing: 2) {
                         HStack(spacing: 4) {
                             TransportButton(
-                                icon: preview.isPlaying ? "pause.fill" : "play.fill",
-                                action: { preview.togglePlayPause() },
+                                icon: controller.isPlaying ? "pause.fill" : "play.fill",
+                                action: { controller.togglePlayPause() },
                                 isPrimary: true, size: 32, tint: tint
                             )
                             TransportButton(
                                 icon: "stop.fill",
-                                action: { preview.stop() },
+                                action: { controller.stop() },
                                 size: 32, tint: tint
                             )
                             Spacer()
@@ -544,8 +558,8 @@ struct PlayerView: View {
                                     .foregroundStyle(.secondary.opacity(0.55))
                                 Slider(
                                     value: Binding(
-                                        get: { Double(preview.volume) },
-                                        set: { preview.volume = Float($0) }
+                                        get: { Double(controller.volume) },
+                                        set: { controller.volume = Float($0) }
                                     ),
                                     in: 0...1
                                 )
@@ -561,7 +575,7 @@ struct PlayerView: View {
                     .padding(.horizontal, 14)
                 }
             }
-            .frame(height: previewDeckHeight)
+            .frame(height: height)
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
     }
