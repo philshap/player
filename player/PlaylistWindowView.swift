@@ -20,6 +20,7 @@ struct PlaylistWindowView: View {
     @State private var isRenaming = false
     @State private var renameText = ""
     @State private var showDeleteConfirmation = false
+    @State private var showStopConfirmation = false
     @State private var selectedTrackID: Track.ID?
 
     private var playlist: Playlist? {
@@ -126,6 +127,19 @@ struct PlaylistWindowView: View {
         } message: {
             Text("Are you sure you want to delete \"\(playlist.name)\"? This cannot be undone.")
         }
+        .confirmationDialog(
+            "Stop Performing",
+            isPresented: $showStopConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Stop Performing", role: .destructive) {
+                appState.performingPlaylistID = nil
+                appState.mode = .curation
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Stop performing \"\(playlist.name)\"? This will stop playback.")
+        }
     }
 
     // MARK: - Track List
@@ -175,9 +189,11 @@ struct PlaylistWindowView: View {
 
     @ViewBuilder
     private func trackContextMenu(index: Int, track: Track, tracks: [Track], playlist: Playlist) -> some View {
-        Button("Play from Here") {
-            appState.mainPlayback.loadPlaylist(playlist)
-            appState.mainPlayback.play(from: index)
+        if !appState.isPerformanceMode {
+            Button("Play from Here") {
+                appState.mainPlayback.loadPlaylist(playlist)
+                appState.mainPlayback.play(from: index)
+            }
         }
 
         Button("Load in Preview") {
@@ -220,8 +236,7 @@ struct PlaylistWindowView: View {
         ToolbarItemGroup(placement: .primaryAction) {
             Button {
                 if isThisPerforming {
-                    appState.performingPlaylistID = nil
-                    appState.mode = .curation
+                    showStopConfirmation = true
                 } else {
                     appState.mainPlayback.loadPlaylist(playlist)
                     appState.performingPlaylistID = playlist.id
@@ -234,6 +249,7 @@ struct PlaylistWindowView: View {
                 )
             }
             .tint(isThisPerforming ? .orange : .accentColor)
+            .disabled(!isThisPerforming && appState.isPerformanceMode)
 
             if !appState.isPerformanceMode {
                 Button {
