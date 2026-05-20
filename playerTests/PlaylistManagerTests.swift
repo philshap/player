@@ -157,47 +157,52 @@ final class PlaylistManagerTests: XCTestCase {
 
 // MARK: - LibraryManager.deleteTrack
 
-@MainActor
 final class LibraryDeleteTests: XCTestCase {
 
-    func test_deleteTrack_removesUUIDFromAllContainingPlaylists() throws {
+    func test_deleteTrack_removesUUIDFromAllContainingPlaylists() async throws {
         let config    = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: Track.self, Playlist.self,
                                            configurations: config)
-        let ctx       = container.mainContext
-        let manager   = PlaylistManager()
 
-        let p1 = Playlist(name: "P1"); ctx.insert(p1)
-        let p2 = Playlist(name: "P2"); ctx.insert(p2)
+        await MainActor.run {
+            let ctx     = container.mainContext
+            let manager = PlaylistManager()
 
-        func track(_ title: String) -> Track {
-            let t = Track(relativePath: "\(title).mp3",
-                          fileURL: URL(fileURLWithPath: "/tmp/\(title).mp3"),
-                          title: title)
-            ctx.insert(t); return t
+            let p1 = Playlist(name: "P1"); ctx.insert(p1)
+            let p2 = Playlist(name: "P2"); ctx.insert(p2)
+
+            func track(_ title: String) -> Track {
+                let t = Track(relativePath: "\(title).mp3",
+                              fileURL: URL(fileURLWithPath: "/tmp/\(title).mp3"),
+                              title: title)
+                ctx.insert(t); return t
+            }
+            let a = track("A"), b = track("B")
+
+            manager.addTracks([a, b], to: p1, modelContext: ctx)
+            manager.addTracks([b, a], to: p2, modelContext: ctx)
+
+            LibraryManager().deleteTrack(a, modelContext: ctx)
+
+            XCTAssertFalse(p1.trackOrder.contains(a.id))
+            XCTAssertFalse(p2.trackOrder.contains(a.id))
+            XCTAssertEqual(p1.trackOrder, [b.id])
+            XCTAssertEqual(p2.trackOrder, [b.id])
         }
-        let a = track("A"), b = track("B")
-
-        manager.addTracks([a, b], to: p1, modelContext: ctx)
-        manager.addTracks([b, a], to: p2, modelContext: ctx)
-
-        LibraryManager().deleteTrack(a, modelContext: ctx)
-
-        XCTAssertFalse(p1.trackOrder.contains(a.id))
-        XCTAssertFalse(p2.trackOrder.contains(a.id))
-        XCTAssertEqual(p1.trackOrder, [b.id])
-        XCTAssertEqual(p2.trackOrder, [b.id])
     }
 
-    func test_deleteTrack_orphanedTrack_doesNotCrash() throws {
+    func test_deleteTrack_orphanedTrack_doesNotCrash() async throws {
         let config    = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: Track.self, Playlist.self,
                                            configurations: config)
-        let ctx = container.mainContext
-        let x   = Track(relativePath: "x.mp3",
-                        fileURL: URL(fileURLWithPath: "/tmp/x.mp3"),
-                        title: "X")
-        ctx.insert(x)
-        LibraryManager().deleteTrack(x, modelContext: ctx)
+
+        await MainActor.run {
+            let ctx = container.mainContext
+            let x   = Track(relativePath: "x.mp3",
+                            fileURL: URL(fileURLWithPath: "/tmp/x.mp3"),
+                            title: "X")
+            ctx.insert(x)
+            LibraryManager().deleteTrack(x, modelContext: ctx)
+        }
     }
 }
