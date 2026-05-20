@@ -40,6 +40,7 @@ struct PlaylistTrackData: Codable {
     var cuePointIn: TimeInterval?
     var cuePointOut: TimeInterval?
     var relativePath: String
+    var humanReadable: String
 }
 
 // MARK: - FocusedValues
@@ -72,8 +73,15 @@ enum PlaylistIO {
             name: playlist.name,
             dateExported: Date(),
             summary: summary,
-            tracks: tracks.map { track in
-                PlaylistTrackData(
+            tracks: tracks.enumerated().map { (index, track) in
+                let artistAlbum = [track.artist, track.album]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: "/")
+                let bpmPart = track.bpm.map { " (\(Int($0.rounded())) BPM)" } ?? ""
+                let artistPart = artistAlbum.isEmpty ? "" : " - \(artistAlbum)"
+                let humanReadable = "\(index + 1): \(track.title)\(artistPart)\(bpmPart) - \(track.duration.mmss())"
+
+                return PlaylistTrackData(
                     title: track.title,
                     artist: track.artist,
                     album: track.album,
@@ -83,7 +91,8 @@ enum PlaylistIO {
                     tags: track.tags,
                     cuePointIn: track.cuePointIn,
                     cuePointOut: track.cuePointOut,
-                    relativePath: track.relativePath
+                    relativePath: track.relativePath,
+                    humanReadable: humanReadable
                 )
             }
         )
