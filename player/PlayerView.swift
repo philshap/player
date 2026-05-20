@@ -188,6 +188,7 @@ private struct ChannelHeader: View {
 
 private struct UpNextCard: View {
     let track: Track?
+    var tint: Color = .accentColor
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -213,6 +214,7 @@ private struct UpNextCard: View {
                         }
                     }
                     Spacer(minLength: 0)
+                    BPMBadge(bpm: track.bpm, tint: tint)
                 }
             } else {
                 Text("—")
@@ -315,9 +317,14 @@ private struct MainDeckView: View {
                 Button {
                     controller.outputChannel = isStereo ? .left : .both
                 } label: {
-                    Image(systemName: isStereo ? "speaker.2.fill" : "speaker.fill")
-                        .font(.caption)
-                        .foregroundStyle(.secondary.opacity(0.6))
+                    ZStack {
+                        Circle()
+                            .fill(Color.white.opacity(0.12))
+                        Image(systemName: isStereo ? "speaker.2.fill" : "speaker.fill")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.secondary.opacity(0.7))
+                    }
+                    .frame(width: 22, height: 22)
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
@@ -389,7 +396,7 @@ private struct MainDeckView: View {
                         .background(.black.opacity(0.52), in: RoundedRectangle(cornerRadius: 6))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         if isPerformanceMode {
-                            UpNextCard(track: controller.upcomingTrack)
+                            UpNextCard(track: controller.upcomingTrack, tint: tint)
                                 .frame(width: 220)
                         }
                     }
@@ -460,9 +467,14 @@ private struct PreviewDeckView: View {
                 Button {
                     controller.outputChannel = isStereo ? .right : .both
                 } label: {
-                    Image(systemName: isStereo ? "speaker.2.fill" : "speaker.fill")
-                        .font(.caption)
-                        .foregroundStyle(.secondary.opacity(0.6))
+                    ZStack {
+                        Circle()
+                            .fill(Color.white.opacity(0.12))
+                        Image(systemName: isStereo ? "speaker.2.fill" : "speaker.fill")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.secondary.opacity(0.7))
+                    }
+                    .frame(width: 22, height: 22)
                 }
                 .buttonStyle(.plain)
                 .focusable(false)

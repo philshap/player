@@ -260,7 +260,12 @@ struct PlaylistWindowView: View {
                 }
 
                 Button(role: .destructive) {
-                    showDeleteConfirmation = true
+                    if playlist.orderedTracks.isEmpty {
+                        appState.playlistManager.deletePlaylist(playlist, modelContext: modelContext)
+                        dismiss()
+                    } else {
+                        showDeleteConfirmation = true
+                    }
                 } label: {
                     Label("Delete Playlist", systemImage: "trash")
                 }
@@ -330,7 +335,7 @@ private struct PerformanceControlsView: View {
                             .font(.caption)
                             .fontWeight(.semibold)
                             .foregroundStyle(.secondary)
-                        TrackInfoView(track: next, artworkSize: 28, titleFont: .subheadline)
+                        TrackInfoView(track: next, artworkSize: 28, titleFont: .subheadline, showsBPM: true)
                     }
                     .padding(6)
                     .background(Color.secondary.opacity(0.08))
@@ -404,15 +409,25 @@ private struct PerformanceControlsView: View {
                         .font(.caption)
                         .buttonStyle(.borderless)
                 } else {
-                    Picker("Gap", selection: Binding(
-                        get: { main.gapDuration },
-                        set: { main.gapDuration = $0 }
+                    Picker("After track", selection: Binding(
+                        get: { main.pauseAfterTrack ? -1.0 as TimeInterval : main.gapDuration },
+                        set: { value in
+                            if value == -1.0 {
+                                main.pauseAfterTrack = true
+                                main.gapDuration = 0
+                            } else {
+                                main.pauseAfterTrack = false
+                                main.gapDuration = value
+                            }
+                        }
                     )) {
                         Text("No gap").tag(0.0 as TimeInterval)
                         Text("1s").tag(1.0 as TimeInterval)
                         Text("2s").tag(2.0 as TimeInterval)
                         Text("3s").tag(3.0 as TimeInterval)
                         Text("5s").tag(5.0 as TimeInterval)
+                        Divider()
+                        Text("Pause after track").tag(-1.0 as TimeInterval)
                     }
                     .fixedSize()
                 }

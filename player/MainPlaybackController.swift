@@ -30,9 +30,10 @@ final class MainPlaybackController: PlaybackController {
 
     // MARK: - Inter-track Gap
 
-    var gapDuration: TimeInterval = 0
-    private(set) var isInGap:      Bool         = false
-    private(set) var gapRemaining: TimeInterval = 0
+    var gapDuration:    TimeInterval = 0
+    var pauseAfterTrack: Bool         = false
+    private(set) var isInGap:        Bool         = false
+    private(set) var gapRemaining:   TimeInterval = 0
 
     @ObservationIgnored private var gapTimer: Timer?
 
@@ -45,6 +46,10 @@ final class MainPlaybackController: PlaybackController {
     /// track starts. Prevents the same track being counted more than once regardless of
     /// how many completion callbacks fire.
     @ObservationIgnored private var currentTrackPlayRecorded = false
+
+    /// True once the current track has actually started playing (not just preloaded).
+    /// Guards `recordPlayIfNeeded` so a preloaded-but-never-played track is never counted.
+    @ObservationIgnored private var currentTrackHasBeenPlayed = false
 
     // MARK: - Pre-fetch
 
@@ -95,8 +100,9 @@ final class MainPlaybackController: PlaybackController {
     private func preloadFirstTrack() {
         guard !playlist.isEmpty else { return }
         playTrack(playlist[0], startPlayback: false)
-        // Mark as recorded so playTrack(at:) doesn't count a preloaded-but-unplayed track.
-        currentTrackPlayRecorded = true
+        // currentTrackHasBeenPlayed stays false — recordPlayIfNeeded will skip this
+        // track until actual playback begins, so a preloaded-but-never-played track
+        // is never counted.
     }
 
     // MARK: - Transport
@@ -113,6 +119,7 @@ final class MainPlaybackController: PlaybackController {
             play()
             return
         }
+        currentTrackHasBeenPlayed = true
         super.resume()
     }
 
@@ -171,7 +178,8 @@ final class MainPlaybackController: PlaybackController {
             (preloadedBufferIndex == index && preloadedTrackID == targetTrack.id) ? preloadedBuffer : nil
 
         currentTrackIndex        = index
-        currentTrackPlayRecorded = false
+        currentTrackPlayRecorded  = false
+        currentTrackHasBeenPlayed = startPlayback
 
         playTrack(targetTrack, cachedBuffer: cachedBuffer, startPlayback: startPlayback)
     }
@@ -196,6 +204,20 @@ final class MainPlaybackController: PlaybackController {
     /// Auto-advances after a track ends naturally.
     private func autoAdvance() {
         let next = currentTrackIndex + 1
+
+        if pauseAfterTrack {
+            recordPlayIfNeeded()
+            if next < playlist.count {
+                playTrack(at: next, startPlayback: false)
+            } else {
+                stopPlayer()
+                isPlaying    = false
+                currentTrack = nil
+                stopPositionTimer()
+            }
+            return
+        }
+
         if next < playlist.count {
             if gapDuration > 0 {
                 startGap(nextIndex: next)
@@ -246,7 +268,10 @@ final class MainPlaybackController: PlaybackController {
     // MARK: - Play Count Tracking
 
     private func recordPlayIfNeeded() {
-        guard recordsPlayStats, let track = currentTrack, !currentTrackPlayRecorded else { return }
+        guard recordsPlayStats,
+              let track = currentTrack,
+              currentTrackHasBeenPlayed,
+              !currentTrackPlayRecorded else { return }
         currentTrackPlayRecorded = true
         track.playCount      += 1
         track.lastPlayedDate  = Date()
