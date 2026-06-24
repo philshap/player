@@ -406,7 +406,7 @@ private struct MainDeckView: View {
                     Spacer(minLength: 0)
 
                     // Transport controls
-                    VStack(spacing: 2) {
+                    VStack(spacing: 4) {
                         HStack(spacing: 4) {
                             TransportButton(
                                 icon: "backward.fill",
@@ -434,6 +434,10 @@ private struct MainDeckView: View {
                                 action: { controller.stop() },
                                 size: 30, tint: tint
                             )
+                            if isPerformanceMode {
+                                Spacer().frame(width: 4)
+                                GapPickerView(controller: controller)
+                            }
                         }
                         .padding(.bottom, 10)
                     }
@@ -441,6 +445,50 @@ private struct MainDeckView: View {
             }
             .frame(height: height)
             .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+    }
+}
+
+// MARK: - Gap Picker (isolated observation to avoid re-rendering the whole deck)
+
+private struct GapPickerView: View {
+    let controller: MainPlaybackController
+
+    var body: some View {
+        if controller.isInGap {
+            HStack(spacing: 4) {
+                Text("Next in \(String(format: "%.0f", controller.gapRemaining))s")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .monospacedDigit()
+                Button("Skip") { controller.nextTrack() }
+                    .font(.caption)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.orange)
+            }
+        } else {
+            Picker("After track", selection: Binding(
+                get: { controller.pauseAfterTrack ? -1.0 as TimeInterval : controller.gapDuration },
+                set: { value in
+                    if value == -1.0 {
+                        controller.pauseAfterTrack = true
+                        controller.gapDuration = 0
+                    } else {
+                        controller.pauseAfterTrack = false
+                        controller.gapDuration = value
+                    }
+                }
+            )) {
+                Text("No gap").tag(0.0 as TimeInterval)
+                Text("1s").tag(1.0 as TimeInterval)
+                Text("2s").tag(2.0 as TimeInterval)
+                Text("3s").tag(3.0 as TimeInterval)
+                Text("5s").tag(5.0 as TimeInterval)
+                Divider()
+                Text("Pause after track").tag(-1.0 as TimeInterval)
+            }
+            .fixedSize()
+            .focusable(false)
         }
     }
 }

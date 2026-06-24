@@ -40,11 +40,15 @@ struct TrackRow: Identifiable, Sendable {
     let tags: [String]
     let sortableTagsString: String
 
+    let cuePointIn: TimeInterval?
+    let cuePointOut: TimeInterval?
+
     // Pre-formatted display strings — no formatter overhead during rendering
     let formattedBPM: String
     let formattedDuration: String
     let formattedLastPlayed: String
     let formattedDateAdded: String
+    let formattedCue: String
 
     private static func stripLeadingThe(_ s: String) -> String {
         if s.count > 4, s.lowercased().hasPrefix("the ") {
@@ -69,6 +73,13 @@ struct TrackRow: Identifiable, Sendable {
         self.dateAdded = track.dateAdded
         self.tags = track.tags
         self.sortableTagsString = track.tags.sorted().joined(separator: ",")
+        self.cuePointIn = track.cuePointIn
+        self.cuePointOut = track.cuePointOut
+
+        var cueParts: [String] = []
+        if let cueIn = track.cuePointIn { cueParts.append("▶\(cueIn.mmss())") }
+        if let cueOut = track.cuePointOut { cueParts.append("◼\(cueOut.mmss())") }
+        self.formattedCue = cueParts.joined(separator: " ")
 
         if let bpm = track.bpm {
             self.formattedBPM = String(format: "%.0f", bpm)
@@ -153,6 +164,10 @@ struct LibraryView: View {
     @State private var appleMusicFolderURL: URL? = nil
     @State private var showItunesAccessSheet = false
     @State private var isNewPlaylistDropTargeted = false
+
+    private var isEditingBinding: Binding<Bool> {
+        Binding(get: { !editingTracks.isEmpty }, set: { if !$0 { editingTracks = [] } })
+    }
 
     var body: some View {
         mainContent
@@ -243,10 +258,7 @@ struct LibraryView: View {
         .onChange(of: tracks.map(\.rating)) { recomputeAllRows(resetScroll: false) }
         .onChange(of: tracks.map(\.playCount)) { recomputeAllRows(resetScroll: false) }
         .onChange(of: tracks.map(\.lastPlayedDate)) { recomputeAllRows(resetScroll: false) }
-        .sheet(isPresented: Binding(
-            get: { !editingTracks.isEmpty },
-            set: { if !$0 { editingTracks = [] } }
-        )) {
+        .sheet(isPresented: isEditingBinding) {
             TrackMetadataEditorView(tracks: editingTracks, allTags: allTagsInLibrary) {
                 editingTracks = []
                 recomputeAllRows(resetScroll: false)
@@ -458,10 +470,18 @@ struct LibraryView: View {
             .width(min: 70, ideal: 90, max: 110)
 
             TableColumn("Duration", value: \.duration) { row in
-                Text(row.formattedDuration)
-                    .monospacedDigit()
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(row.formattedDuration)
+                        .monospacedDigit()
+                    if !row.formattedCue.isEmpty {
+                        Text(row.formattedCue)
+                            .font(.system(size: 9))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
-            .width(min: 50, ideal: 65, max: 80)
+            .width(min: 50, ideal: 80, max: 120)
 
             TableColumn("Plays", value: \.playCount) { row in
                 Text("\(row.playCount)")

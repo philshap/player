@@ -55,11 +55,6 @@ struct PlaylistWindowView: View {
 
         NavigationStack {
             VStack(spacing: 0) {
-                if appState.isPerformanceMode && appState.performingPlaylistID == playlist.id {
-                    PerformanceControlsView()
-                    Divider()
-                }
-
                 Group {
                     if tracks.isEmpty {
                         ContentUnavailableView(
@@ -313,134 +308,6 @@ struct PlaylistWindowView: View {
 
 }
 
-// MARK: - Performance Controls (isolated observation)
-
-/// Isolated subview that observes `mainPlayback.currentTime` for the seek slider.
-/// Keeps this rapid observation out of the parent view so the List isn't disrupted.
-private struct PerformanceControlsView: View {
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        let main = appState.mainPlayback
-
-        VStack(spacing: 6) {
-            HStack(alignment: .top, spacing: 12) {
-                if let track = main.currentTrack {
-                    TrackInfoView(track: track, artworkSize: 40, titleFont: .headline)
-                }
-                Spacer()
-                if let next = main.upcomingTrack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Up Next")
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.secondary)
-                        TrackInfoView(track: next, artworkSize: 28, titleFont: .subheadline, showsBPM: true)
-                    }
-                    .padding(6)
-                    .background(Color.secondary.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                }
-            }
-
-            HStack(spacing: 6) {
-                Text(main.currentTime.mmss())
-                    .font(.caption)
-                    .monospacedDigit()
-                    .frame(width: 50, alignment: .trailing)
-
-                Slider(
-                    value: Binding(
-                        get: { main.currentTime },
-                        set: { main.seek(to: $0) }
-                    ),
-                    in: 0...max(main.duration, 0.01),
-                    onEditingChanged: { editing in
-                        if editing { main.beginInteractiveSeek() }
-                        else { main.endInteractiveSeek() }
-                    }
-                )
-
-                Text(main.duration.mmss())
-                    .font(.caption)
-                    .monospacedDigit()
-                    .frame(width: 50, alignment: .leading)
-            }
-
-            HStack(spacing: 20) {
-                Button { main.previousTrack() } label: {
-                    Image(systemName: "backward.fill").font(.title2)
-                }
-                .buttonStyle(.borderless)
-                .help("Previous Track")
-
-                Button { main.seek(to: 0) } label: {
-                    Image(systemName: "arrow.counterclockwise").font(.title2)
-                }
-                .buttonStyle(.borderless)
-                .disabled(main.currentTrack == nil)
-                .help("Restart Track")
-
-                Button { main.togglePlayPause() } label: {
-                    Image(systemName: main.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title)
-                }
-                .buttonStyle(.borderless)
-
-                Button { main.nextTrack() } label: {
-                    Image(systemName: "forward.fill").font(.title2)
-                }
-                .buttonStyle(.borderless)
-
-                Button { main.stop() } label: {
-                    Image(systemName: "stop.fill").font(.title2)
-                }
-                .buttonStyle(.borderless)
-
-                Spacer().frame(width: 8)
-
-                if main.isInGap {
-                    Text("Next in \(String(format: "%.0f", main.gapRemaining))s")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .monospacedDigit()
-
-                    Button("Skip") { main.nextTrack() }
-                        .font(.caption)
-                        .buttonStyle(.borderless)
-                } else {
-                    Picker("After track", selection: Binding(
-                        get: { main.pauseAfterTrack ? -1.0 as TimeInterval : main.gapDuration },
-                        set: { value in
-                            if value == -1.0 {
-                                main.pauseAfterTrack = true
-                                main.gapDuration = 0
-                            } else {
-                                main.pauseAfterTrack = false
-                                main.gapDuration = value
-                            }
-                        }
-                    )) {
-                        Text("No gap").tag(0.0 as TimeInterval)
-                        Text("1s").tag(1.0 as TimeInterval)
-                        Text("2s").tag(2.0 as TimeInterval)
-                        Text("3s").tag(3.0 as TimeInterval)
-                        Text("5s").tag(5.0 as TimeInterval)
-                        Divider()
-                        Text("Pause after track").tag(-1.0 as TimeInterval)
-                    }
-                    .fixedSize()
-                }
-            }
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(.orange.opacity(0.08))
-    }
-
-
-}
-
 // MARK: - Playlist Statistics Bar
 
 private struct PlaylistStatsBar: View {
@@ -521,6 +388,19 @@ private struct PlaylistTrackRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                }
+
+                if !track.tags.isEmpty {
+                    HStack(spacing: 3) {
+                        ForEach(track.tags, id: \.self) { tag in
+                            Text(tag)
+                                .font(.system(size: 9))
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Color.accentColor.opacity(0.18)))
+                                .lineLimit(1)
+                        }
+                    }
                 }
             }
             .frame(minWidth: 100, alignment: .leading)
