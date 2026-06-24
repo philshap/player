@@ -105,19 +105,27 @@ final class AudioEngineManager {
 
         // Players lose their scheduled data when the engine stops; have each
         // controller mark itself stopped and reconnect its graph with the new format.
+        // Each controller's handleEngineConfigurationChange enqueues its engine.connect
+        // calls on playerQueue. We then enqueue engine.start on the same serial queue
+        // so it executes only after all reconnects complete — no blocking on main actor.
         for box in controllers {
             box.value?.handleEngineConfigurationChange()
         }
 
-        do {
-            try engine.start()
-        } catch {
-            print("[AudioEngineManager] Restart after config change failed: \(error)")
-            return
-        }
-
-        for box in controllers {
-            box.value?.resumeAfterEngineRestart()
+        let snapshot = controllers.compactMap { $0.value }
+        playerQueue.async { [weak self] in
+            guard let self else { return }
+            do {
+                try self.engine.start()
+            } catch {
+                print("[AudioEngineManager] Restart after config change failed: \(error)")
+                return
+            }
+            DispatchQueue.main.async {
+                for controller in snapshot {
+                    controller.resumeAfterEngineRestart()
+                }
+            }
         }
     }
 
@@ -153,9 +161,15 @@ final class AudioEngineManager {
 
     /// Re-establishes the player→mixer→mainMixer connections using the current
     /// `playerFormat`. Called by controllers during configuration-change recovery.
+    ///
+    /// Dispatched to `playerQueue` so the main actor never blocks on AVFoundation's
+    /// internal Default-QoS locks (which would trigger a priority-inversion warning).
     func connect(player: AVAudioPlayerNode, mixer: AVAudioMixerNode) {
-        engine.connect(player, to: mixer,             format: playerFormat)
-        engine.connect(mixer,  to: engine.mainMixerNode, format: playerFormat)
+        let format = playerFormat!
+        playerQueue.async { [engine] in
+            engine.connect(player, to: mixer,             format: format)
+            engine.connect(mixer,  to: engine.mainMixerNode, format: format)
+        }
     }
 
     // MARK: - Buffer Loading
