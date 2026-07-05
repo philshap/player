@@ -345,6 +345,7 @@ private struct MainDeckView: View {
                 )
                 .padding(.horizontal, 48)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(!isPerformanceMode)
 
                 // Layer 1: time labels at vertical center, in the left/right margins
                 HStack {
