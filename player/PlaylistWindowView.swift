@@ -5,6 +5,7 @@
 
 import SwiftUI
 import SwiftData
+import Charts
 import UniformTypeIdentifiers
 
 struct PlaylistWindowView: View {
@@ -22,6 +23,7 @@ struct PlaylistWindowView: View {
     @State private var showDeleteConfirmation = false
     @State private var showStopConfirmation = false
     @State private var selectedTrackID: Track.ID?
+    @State private var showBPMGraph = false
 
     private var playlist: Playlist? {
         guard let uuid = UUID(uuidString: playlistID) else { return nil }
@@ -54,7 +56,24 @@ struct PlaylistWindowView: View {
         let tracks = playlist.orderedTracks
 
         NavigationStack {
+            ScrollViewReader { scrollProxy in
             VStack(spacing: 0) {
+                if !tracks.isEmpty {
+                    let isActivePlaylist = appState.isPerformanceMode && appState.performingPlaylistID == playlist.id
+                    BPMGraphSection(
+                        tracks: tracks,
+                        isExpanded: $showBPMGraph,
+                        currentTrackID: isActivePlaylist ? appState.mainPlayback.currentTrack?.id : nil,
+                        onSelectTrack: { trackID in
+                            selectedTrackID = trackID
+                            withAnimation {
+                                scrollProxy.scrollTo(trackID, anchor: .center)
+                            }
+                        }
+                    )
+                    Divider()
+                }
+
                 Group {
                     if tracks.isEmpty {
                         ContentUnavailableView(
@@ -88,6 +107,7 @@ struct PlaylistWindowView: View {
             )
             .toolbar {
                 toolbarContent(playlist)
+            }
             }
         }
         .focusedValue(\.focusedPlaylist, playlist)
@@ -147,6 +167,7 @@ struct PlaylistWindowView: View {
                 PlaylistTrackRow(track: track, index: index, isCurrentlyPlaying: isActivePlaylist && appState.mainPlayback.currentTrack?.id == track.id, isActivePlaylist: isActivePlaylist)
                     .draggable(TrackTransfer.encode(trackIDs: [track.id]))
                     .tag(track.id)
+                    .id(track.id)
                     .contextMenu {
                         trackContextMenu(index: index, track: track, tracks: tracks, playlist: playlist)
                     }
@@ -306,6 +327,168 @@ struct PlaylistWindowView: View {
         isRenaming = false
     }
 
+}
+
+// MARK: - BPM Graph Section
+
+/// Collapsible BPM-over-set-position chart shown above the track list.
+/// Dashed guide lines at 110 and 180 BPM bracket the typical 120–175 range.
+private struct BPMGraphSection: View {
+    let tracks: [Track]
+    @Binding var isExpanded: Bool
+    let currentTrackID: UUID?
+    let onSelectTrack: (UUID) -> Void
+
+    @State private var hoveredIndex: Int?
+
+    private var points: [(index: Int, track: Track, bpm: Double)] {
+        tracks.enumerated().compactMap { index, track in
+            guard let bpm = track.bpm, bpm > 0 else { return nil }
+            return (index, track, bpm)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    Label("BPM", systemImage: "metronome")
+                        .font(.caption)
+                    Spacer()
+                }
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+
+            if isExpanded {
+                if points.isEmpty {
+                    Text("No BPM data in this playlist.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.bottom, 10)
+                } else {
+                    chart
+                        .frame(height: 130)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 10)
+                }
+            }
+        }
+    }
+
+    private var chart: some View {
+        let points = self.points
+        let bpms = points.map(\.bpm)
+        let yMin = min(100, (bpms.min() ?? 110) - 10)
+        let yMax = max(190, (bpms.max() ?? 180) + 10)
+
+        return Chart {
+            RuleMark(y: .value("BPM", 110))
+                .foregroundStyle(.secondary.opacity(0.5))
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            RuleMark(y: .value("BPM", 180))
+                .foregroundStyle(.secondary.opacity(0.5))
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+
+            ForEach(points, id: \.track.id) { point in
+                LineMark(
+                    x: .value("Track", point.index + 1),
+                    y: .value("BPM", point.bpm)
+                )
+                .foregroundStyle(Color.accentColor.opacity(0.6))
+                .interpolationMethod(.monotone)
+
+                PointMark(
+                    x: .value("Track", point.index + 1),
+                    y: .value("BPM", point.bpm)
+                )
+                .foregroundStyle(point.track.id == currentTrackID ? Color.orange : Color.accentColor)
+                .symbolSize(point.track.id == currentTrackID ? 90 : (point.index == hoveredIndex ? 80 : 40))
+                .annotation(
+                    position: .top,
+                    spacing: 6,
+                    overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))
+                ) {
+                    if point.index == hoveredIndex {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(point.track.title)
+                                .font(.caption)
+                                .lineLimit(1)
+                            Text("\(Int(point.bpm.rounded())) BPM")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
+                        .shadow(radius: 2)
+                    }
+                }
+            }
+        }
+        .chartOverlay { proxy in
+            GeometryReader { _ in
+                Rectangle()
+                    .fill(.clear)
+                    .contentShape(Rectangle())
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active(let location):
+                            hoveredIndex = nearestPoint(atX: location.x, proxy: proxy)?.index
+                        case .ended:
+                            hoveredIndex = nil
+                        }
+                    }
+                    .onTapGesture { location in
+                        if let point = nearestPoint(atX: location.x, proxy: proxy) {
+                            onSelectTrack(point.track.id)
+                        }
+                    }
+            }
+        }
+        .chartXScale(domain: 0.5...(Double(tracks.count) + 0.5))
+        .chartYScale(domain: yMin...yMax)
+        .chartYAxis {
+            AxisMarks(values: [110, 180]) { _ in
+                AxisGridLine().foregroundStyle(.clear)
+                AxisValueLabel()
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .chartXAxis {
+            AxisMarks(values: .automatic(desiredCount: min(tracks.count, 12))) { value in
+                if let n = value.as(Int.self), n >= 1, n <= tracks.count {
+                    AxisValueLabel {
+                        Text("\(n)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Maps a plot-area x position to the nearest charted track.
+    private func nearestPoint(atX x: CGFloat, proxy: ChartProxy) -> (index: Int, track: Track, bpm: Double)? {
+        guard let xValue: Double = proxy.value(atX: x) else { return nil }
+        return points.min {
+            abs(Double($0.index + 1) - xValue) < abs(Double($1.index + 1) - xValue)
+        }
+    }
 }
 
 // MARK: - Playlist Statistics Bar

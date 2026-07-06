@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & Test
 
-This is an Xcode project. All commands should be run from the `player/` directory (which contains `player.xcodeproj`).
+This is an Xcode project. All commands should be run from the repository root (which contains `player.xcodeproj`).
 
 ```bash
-# Build (simulator)
+# Build (macOS)
 xcodebuild -project player.xcodeproj -scheme player -destination 'platform=macOS' build
 
 # Run all tests
