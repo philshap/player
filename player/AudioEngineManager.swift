@@ -1,3 +1,4 @@
+import AppKit
 @preconcurrency import AVFoundation
 import Observation
 
@@ -57,17 +58,26 @@ final class AudioEngineManager {
     @ObservationIgnored private var controllers: [WeakBox<PlaybackController>] = []
 
     @ObservationIgnored private var configChangeObserver: (any NSObjectProtocol)?
+    @ObservationIgnored private var willSleepObserver:    (any NSObjectProtocol)?
+    @ObservationIgnored private var didWakeObserver:      (any NSObjectProtocol)?
 
     // MARK: - Init / Teardown
 
     init() {
         refreshPlayerFormat()
         observeConfigurationChanges()
+        observeSystemSleep()
     }
 
     deinit {
         if let obs = configChangeObserver {
             NotificationCenter.default.removeObserver(obs)
+        }
+        if let obs = willSleepObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(obs)
+        }
+        if let obs = didWakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(obs)
         }
         engine.stop()
     }
@@ -95,6 +105,47 @@ final class AudioEngineManager {
         ) { [weak self] _ in
             self?.handleEngineConfigurationChange()
         }
+    }
+
+    private func observeSystemSleep() {
+        let center = NSWorkspace.shared.notificationCenter
+        willSleepObserver = center.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleSystemWillSleep()
+        }
+        didWakeObserver = center.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleSystemDidWake()
+        }
+    }
+
+    /// System sleep tears down the audio device; a play() issued against the
+    /// stopped engine raises an uncatchable NSException. Pause every controller
+    /// (clearing its auto-resume intent — playback intentionally stays paused
+    /// after wake) and stop the engine cleanly before the hardware disappears.
+    private func handleSystemWillSleep() {
+        for box in controllers {
+            box.value?.handleSystemWillSleep()
+        }
+        // Enqueued after the controllers' player.pause() calls on the same
+        // serial queue, so the players are quiesced before the engine stops.
+        playerQueue.async { [engine] in
+            if engine.isRunning { engine.stop() }
+        }
+    }
+
+    /// The engine was stopped for sleep and its players lost their scheduled
+    /// buffers. Run the same recovery as a hardware configuration change so
+    /// each controller re-parks its track (paused) at the pre-sleep position —
+    /// the config-change notification is not reliably posted after a wake.
+    private func handleSystemDidWake() {
+        handleEngineConfigurationChange()
     }
 
     /// Handles audio hardware changes (e.g. headphones plugged/unplugged).

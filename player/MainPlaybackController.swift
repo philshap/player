@@ -199,6 +199,16 @@ final class MainPlaybackController: PlaybackController {
         autoAdvance()
     }
 
+    override func handleSystemWillSleep() {
+        // Sleeping mid-gap must not auto-play the next track on wake. Cancel
+        // the countdown and park the next track paused instead.
+        if isInGap {
+            cancelGap()
+            playTrack(at: currentTrackIndex + 1, startPlayback: false)
+        }
+        super.handleSystemWillSleep()
+    }
+
     // MARK: - Auto-Advance
 
     /// Auto-advances after a track ends naturally.

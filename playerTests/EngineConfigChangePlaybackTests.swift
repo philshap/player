@@ -386,6 +386,111 @@ final class EngineConfigChangePlaybackTests: XCTestCase {
         )
     }
 
+    /// System sleep while playing: the controller must pause, and the wake
+    /// recovery (same path as a config change) must NOT auto-resume playback.
+    /// Mirrors AudioEngineManager.handleSystemWillSleep / handleSystemDidWake,
+    /// which can't be driven directly from a unit test (NSWorkspace
+    /// notifications, private methods).
+    func test_playingController_pausesOnSystemSleep_andStaysPausedAfterWake() async throws {
+        let manager = AudioEngineManager()
+        let controller = MainPlaybackController(audioEngine: manager)
+
+        let url1 = try makeTestFile(durationSeconds: 2)
+        let url2 = try makeTestFile(durationSeconds: 2)
+        controller.loadTracks([makeTrack(url: url1, duration: 2),
+                               makeTrack(url: url2, duration: 2)])
+        await waitFor(timeout: 3) { controller.currentFullBuffer != nil }
+
+        controller.play()
+        await waitFor(timeout: 3) { controller.isPlaying && controller.currentFullBuffer != nil }
+        XCTAssertTrue(controller.isPlaying, "Controller should be playing track 0")
+        await drain(manager.playerQueue)
+
+        let beforeIndex   = controller.currentTrackIndex
+        let beforeTrackID = controller.currentTrack?.id
+
+        // Sleep: controllers pause, then the engine stops (same ordering as
+        // AudioEngineManager.handleSystemWillSleep).
+        controller.handleSystemWillSleep()
+        XCTAssertFalse(controller.isPlaying, "Controller must pause on system sleep")
+        await drain(manager.playerQueue)
+        manager.engine.stop()
+        await runMainLoop(for: 0.3)
+
+        // Wake: config-change-style recovery restarts the engine and re-parks.
+        controller.handleEngineConfigurationChange()
+        try? manager.engine.start()
+        controller.resumeAfterEngineRestart()
+        await drain(manager.playerQueue)
+        await runMainLoop(for: 0.5)
+
+        XCTAssertFalse(
+            controller.isPlaying,
+            "Playback must not auto-resume after wake"
+        )
+        XCTAssertEqual(controller.currentTrackIndex, beforeIndex,
+                       "Sleep/wake must not change the current track index")
+        XCTAssertEqual(controller.currentTrack?.id, beforeTrackID,
+                       "Sleep/wake must not change the current track")
+    }
+
+    /// Regression test for the SIGABRT crash: resume() while the engine is
+    /// stopped (e.g. pressing play shortly after wake, before any config-change
+    /// notification restarted the engine). play() on a stopped engine raises an
+    /// uncatchable NSException — resume() must start the engine first.
+    func test_resume_withStoppedEngine_doesNotCrash() async throws {
+        let manager = AudioEngineManager()
+        let controller = PreviewPlaybackController(audioEngine: manager)
+
+        let url = try makeTestFile(durationSeconds: 2)
+        controller.load(makeTrack(url: url, duration: 2))
+        await waitFor(timeout: 3) { controller.isPlaying && controller.currentFullBuffer != nil }
+        await drain(manager.playerQueue)
+
+        controller.pause()
+        await drain(manager.playerQueue)
+
+        // Engine dies behind the controller's back (sleep, device removal).
+        manager.engine.stop()
+        await runMainLoop(for: 0.2)
+        XCTAssertFalse(manager.engine.isRunning, "Test precondition: engine stopped")
+
+        // Before the fix this aborted the process inside -[AVAudioPlayerNode play].
+        controller.resume()
+        await drain(manager.playerQueue)
+
+        XCTAssertTrue(manager.engine.isRunning,
+                      "resume() must restart the stopped engine before playing")
+        XCTAssertTrue(controller.isPlaying)
+    }
+
+    /// Same crash via the other play() path: a seek that restarts playback
+    /// (scheduleSeek) while the engine is stopped.
+    func test_seekWhilePlaying_withStoppedEngine_doesNotCrash() async throws {
+        let manager = AudioEngineManager()
+        let controller = PreviewPlaybackController(audioEngine: manager)
+
+        let url = try makeTestFile(durationSeconds: 2)
+        controller.load(makeTrack(url: url, duration: 2))
+        await waitFor(timeout: 3) { controller.isPlaying && controller.currentFullBuffer != nil }
+        await drain(manager.playerQueue)
+
+        manager.engine.stop()
+        await runMainLoop(for: 0.2)
+        XCTAssertFalse(manager.engine.isRunning, "Test precondition: engine stopped")
+
+        // isPlaying is still true, so the seek goes through scheduleSeek's
+        // stop → schedule → play() work item.
+        controller.seek(to: 1.0)
+        await drain(manager.playerQueue)
+        await runMainLoop(for: 0.2)
+
+        XCTAssertTrue(manager.engine.isRunning,
+                      "scheduleSeek must restart the stopped engine before playing")
+        XCTAssertTrue(controller.isPlaying)
+        XCTAssertEqual(controller.currentTime, 1.0, accuracy: 0.3)
+    }
+
     /// Thread-safe boolean used by the audio tap callback (audio thread) and
     /// the test code (main).
     private final class NonSilenceMonitor: @unchecked Sendable {

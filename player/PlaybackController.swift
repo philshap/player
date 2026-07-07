@@ -185,9 +185,21 @@ class PlaybackController {
 
     func resume() {
         guard !isPlaying, currentTrack != nil else { return }
+        // The engine may have stopped behind our back (system sleep, device
+        // removal). play() on a stopped engine raises an uncatchable
+        // NSException, so make sure it is running before dispatching.
+        do {
+            try audioEngine.ensureRunning()
+        } catch {
+            print("\(type(of: self)): engine start failed on resume — \(error.localizedDescription)")
+            return
+        }
         isPlaying = true
         startPositionTimer()
-        audioEngine.playerQueue.async { [player] in
+        audioEngine.playerQueue.async { [player, engine = audioEngine.engine] in
+            // Re-check on the queue: the engine can stop again between the
+            // ensureRunning() above and this block executing.
+            guard engine.isRunning else { return }
             player.play()
         }
     }
@@ -383,8 +395,9 @@ class PlaybackController {
     func scheduleSeek(_ buffer: AVAudioPCMBuffer, completion: (() -> Void)? = nil) throws {
         pendingSeek?.cancel()
         seekSerial += 1
+        try audioEngine.ensureRunning()
         var item: DispatchWorkItem!
-        item = DispatchWorkItem { [player] in
+        item = DispatchWorkItem { [player, engine = audioEngine.engine] in
             guard !item.isCancelled else {
                 return
             }
@@ -393,6 +406,12 @@ class PlaybackController {
             // A newer seek may have arrived while we were stopping. If so, skip play() —
             // the next item will stop() an idle player (fast) rather than a running one (slow).
             guard !item.isCancelled else {
+                return
+            }
+            // Re-check on the queue: the engine can stop between the
+            // ensureRunning() above and this block executing (e.g. system
+            // sleep). play() would raise an uncatchable NSException.
+            guard engine.isRunning else {
                 return
             }
             player.play()
@@ -433,11 +452,19 @@ class PlaybackController {
         return Double(playerTime.sampleTime) / playerTime.sampleRate
     }
 
-    // MARK: - Configuration-Change Hook
+    // MARK: - Configuration-Change / Sleep Hooks
 
     /// Saved across `handleEngineConfigurationChange` → `resumeAfterEngineRestart`
     /// so the engine manager can restore playing state after the engine starts.
     @ObservationIgnored private var wasPlayingBeforeConfigChange = false
+
+    /// Called by `AudioEngineManager` when the system is about to sleep.
+    /// Pauses playback and clears any saved auto-resume intent: playback
+    /// intentionally stays paused after the machine wakes.
+    func handleSystemWillSleep() {
+        wasPlayingBeforeConfigChange = false
+        pause()
+    }
 
     /// Called by `AudioEngineManager` when the audio hardware configuration changes.
     /// Saves playing state, stops the player node (prevents any auto-resume on
