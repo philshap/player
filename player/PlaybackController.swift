@@ -71,10 +71,10 @@ class PlaybackController {
     /// Changing this does not affect a currently-playing track until the next buffer loads.
     var outputChannel: AudioEngineManager.OutputChannel
 
-    /// Output volume (0.0 ... 1.0) for this controller's mixer.
-    var volume: Float {
-        get { mixer.outputVolume }
-        set { mixer.outputVolume = newValue.clamped(to: 0...1) }
+    /// Output volume (0.0 ... 1.0) for this controller's mixer. Stored (not
+    /// computed from `mixer`) so SwiftUI observes changes.
+    var volume: Float = 1 {
+        didSet { mixer.outputVolume = volume.clamped(to: 0...1) }
     }
 
     // MARK: - Internal Playback State

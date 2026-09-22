@@ -112,6 +112,28 @@ final class PlaylistManager {
         notify(playlist)
     }
 
+    func removeTracks(withIDs ids: [UUID], from playlist: Playlist) {
+        guard !ids.isEmpty else { return }
+        ensureTrackOrder(playlist)
+        let idSet = Set(ids)
+        playlist.trackOrder.removeAll { idSet.contains($0) }
+        playlist.tracks.removeAll { idSet.contains($0.id) }
+        playlist.dateModified = Date()
+        notify(playlist)
+    }
+
+    /// Completes a move of `tracks` into `destination` by removing them from
+    /// the playlist they were dragged from. No-op for copies (nil source) and
+    /// for drops back onto the source playlist.
+    func completeMove(of tracks: [Track], fromPlaylistID sourceID: UUID?, to destination: Playlist, modelContext: ModelContext) {
+        guard !tracks.isEmpty,
+              let sourceID, sourceID != destination.id,
+              let playlists = try? modelContext.fetch(FetchDescriptor<Playlist>()),
+              let source = playlists.first(where: { $0.id == sourceID })
+        else { return }
+        removeTracks(withIDs: tracks.map(\.id), from: source)
+    }
+
     func moveTrack(in playlist: Playlist, from sourceIndex: Int, to destinationIndex: Int) {
         ensureTrackOrder(playlist)
         guard sourceIndex >= 0, sourceIndex < playlist.trackOrder.count,

@@ -82,8 +82,8 @@ The primary concern is preventing accidental modifications during live playback 
 - Waveform seek bar with click-to-seek on both decks; level meter on the main deck
 - Preview/cue section with its own controls and track info
 - Channel routing toggle per output (left-only vs. both channels)
-- Volume control for preview
-- System volume control on the main deck — slider plus 1/64-step buttons for micro-adjusting the Mac's output volume (hidden when the output device has no volume control, e.g. HDMI)
+- Volume control for preview — slider with clickable speaker icons at each end that step the volume (5% per click, hold to repeat)
+- System volume control on the main deck — same control, stepping 1/64 per click for micro-adjusting the Mac's output volume; raising it from 0 unmutes, lowering to 0 mutes (hidden when the output device has no volume control, e.g. HDMI)
 
 ### Playlist Windows
 - Each playlist opens in its own window
@@ -91,7 +91,7 @@ The primary concern is preventing accidental modifications during live playback 
 - Collapsible BPM-over-set-position graph above the track list (hover for track details, click to select)
 - Drag-and-drop reordering within playlist
 - Drag-and-drop from library into playlist (including during performance mode)
-- Option-drag a track onto another playlist to move it there instead of copying
+- Dragging a track to another playlist moves it; holding Option copies instead (Finder convention — the cursor shows a "+" badge while copying, and Option can be toggled mid-drag; the state at drop time decides). Drags from the library always copy
 - Delete key removes the selected track from the playlist
 - Context menu: play from here, load in preview, jump to cue in, clear cue points, remove
 - Progress bar background on currently playing track
@@ -152,9 +152,8 @@ The primary concern is preventing accidental modifications during live playback 
 - Apple Music library integration
 - Streaming sources (Apple Music, Spotify)
 
-## Nice-to-Have Features (not required for v1)
+## Nice-to-Have Features
 
-- Crossfade between playlist tracks
 - External soundcard routing (e.g. USB devices like Traktor Audio 2)
 - Loudness normalization (EBU R128 / ReplayGain-style per-track gain)
 

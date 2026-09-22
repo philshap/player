@@ -27,6 +27,7 @@ final class AppState {
     let previewPlayback: PreviewPlaybackController
     let libraryManager: LibraryManager
     let playlistManager: PlaylistManager
+    let systemVolume: SystemVolumeController
 
     var isPerformanceMode: Bool { mode == .performance }
 
@@ -62,6 +63,7 @@ final class AppState {
         self.previewPlayback = PreviewPlaybackController(audioEngine: engine)
         self.libraryManager = LibraryManager()
         self.playlistManager = PlaylistManager()
+        self.systemVolume = SystemVolumeController()
 
         try? engine.start()
 

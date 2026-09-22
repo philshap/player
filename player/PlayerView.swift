@@ -314,6 +314,8 @@ private struct MainDeckView: View {
                     showMeter: true,
                     meterLevel: waveformLevel(controller)
                 )
+                SystemVolumeSlider()
+                    .padding(.leading, 6)
                 Button {
                     controller.outputChannel = isStereo ? .left : .both
                 } label: {
@@ -446,6 +448,96 @@ private struct MainDeckView: View {
             }
             .frame(height: height)
             .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+    }
+}
+
+// MARK: - Volume Control
+
+/// Slider flanked by speaker icons that step the volume down/up when clicked
+/// (hold to repeat). Shared by the preview deck and the system volume control.
+private struct VolumeControl: View {
+    @Binding var value: Float
+    let step: Float
+    let name: String
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Button { value = (value - step).clamped(to: 0...1) } label: {
+                Image(systemName: "speaker.fill")
+            }
+            .help("\(name) down")
+            Slider(
+                value: Binding(get: { Double(value) }, set: { value = Float($0) }),
+                in: 0...1
+            )
+            .focusable(false)
+            .frame(width: 84)
+            Button { value = (value + step).clamped(to: 0...1) } label: {
+                Image(systemName: "speaker.wave.3.fill")
+            }
+            .help("\(name) up")
+        }
+        .buttonStyle(VolumeStepButtonStyle())
+        .buttonRepeatBehavior(.enabled)
+        .focusable(false)
+    }
+}
+
+/// Icon button with a hover highlight (shows it's clickable) and a pressed
+/// state (confirms the click landed).
+private struct VolumeStepButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        StyledLabel(configuration: configuration)
+    }
+
+    private struct StyledLabel: View {
+        let configuration: Configuration
+        @State private var isHovered = false
+
+        var body: some View {
+            configuration.label
+                .font(.caption)
+                .foregroundStyle(
+                    configuration.isPressed || isHovered
+                        ? AnyShapeStyle(.primary)
+                        : AnyShapeStyle(.secondary.opacity(0.55))
+                )
+                .scaleEffect(configuration.isPressed ? 0.85 : 1)
+                .frame(width: 20, height: 20)
+                .background(
+                    Circle().fill(Color.white.opacity(
+                        configuration.isPressed ? 0.22 : (isHovered ? 0.1 : 0)
+                    ))
+                )
+                .contentShape(Circle())
+                .onHover { isHovered = $0 }
+                .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
+                .animation(.easeOut(duration: 0.1), value: isHovered)
+        }
+    }
+}
+
+/// The Mac's output volume (not the app mixer), with 1/64 steps for micro
+/// adjustments. Hidden when the default output device has no volume control
+/// (e.g. HDMI).
+private struct SystemVolumeSlider: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        @Bindable var systemVolume = appState.systemVolume
+        if systemVolume.isAvailable {
+            HStack(spacing: 3) {
+                Text("SYS")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondary.opacity(0.5))
+                    .kerning(0.6)
+                VolumeControl(
+                    value: $systemVolume.volume,
+                    step: SystemVolumeController.microStep,
+                    name: "System volume"
+                )
+            }
         }
     }
 }
@@ -613,23 +705,14 @@ private struct PreviewDeckView: View {
                                 size: 32, tint: tint
                             )
                             Spacer()
-                            HStack(spacing: 5) {
-                                Image(systemName: "speaker.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary.opacity(0.55))
-                                Slider(
-                                    value: Binding(
-                                        get: { Double(controller.volume) },
-                                        set: { controller.volume = Float($0) }
-                                    ),
-                                    in: 0...1
-                                )
-                                .focusable(false)
-                                .frame(width: 90)
-                                Image(systemName: "speaker.wave.3.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary.opacity(0.55))
-                            }
+                            VolumeControl(
+                                value: Binding(
+                                    get: { controller.volume },
+                                    set: { controller.volume = $0 }
+                                ),
+                                step: 0.05,
+                                name: "Preview volume"
+                            )
                         }
                         .padding(.bottom, 10)
                     }

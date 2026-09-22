@@ -381,20 +381,21 @@ struct LibraryView: View {
                         RoundedRectangle(cornerRadius: 4)
                             .fill(isNewPlaylistDropTargeted ? Color.accentColor.opacity(0.2) : .clear)
                     )
-                    .dropDestination(for: String.self) { droppedStrings, _ in
+                    .onDrop(of: [.utf8PlainText], delegate: TrackDropDelegate(isTargeted: $isNewPlaylistDropTargeted) { droppedStrings, moveSource in
                         let droppedTracks = TrackTransfer.tracks(from: droppedStrings, in: tracks)
-                        guard !droppedTracks.isEmpty else { return false }
+                        guard !droppedTracks.isEmpty else { return }
                         let baseName = droppedTracks.count == 1
                             ? droppedTracks[0].title
                             : "New Playlist"
                         let name = appState.playlistManager.uniquePlaylistName(base: baseName, among: playlists)
                         let playlist = appState.playlistManager.createPlaylist(name: name, modelContext: modelContext)
                         appState.playlistManager.addTracks(droppedTracks, to: playlist, modelContext: modelContext)
+                        appState.playlistManager.completeMove(
+                            of: droppedTracks, fromPlaylistID: moveSource,
+                            to: playlist, modelContext: modelContext
+                        )
                         openWindow(id: "playlist", value: playlist.id.uuidString)
-                        return true
-                    } isTargeted: { targeted in
-                        isNewPlaylistDropTargeted = targeted
-                    }
+                    })
                 }
             }
         }
@@ -659,9 +660,9 @@ struct LibraryView: View {
 
     private func draggablePayload(for row: TrackRow) -> String {
         if selectedTrackIDs.contains(row.id) {
-            return TrackTransfer.encode(trackIDs: Array(selectedTrackIDs))
+            return TrackTransfer.beginDrag(trackIDs: Array(selectedTrackIDs), from: nil)
         } else {
-            return TrackTransfer.encode(trackIDs: [row.id])
+            return TrackTransfer.beginDrag(trackIDs: [row.id], from: nil)
         }
     }
 
@@ -876,13 +877,14 @@ private struct PlaylistSidebarRow: View {
             RoundedRectangle(cornerRadius: 4)
                 .fill(isDropTargeted ? Color.accentColor.opacity(0.2) : .clear)
         )
-        .dropDestination(for: String.self) { droppedStrings, _ in
+        .onDrop(of: [.utf8PlainText], delegate: TrackDropDelegate(isTargeted: $isDropTargeted) { droppedStrings, moveSource in
             let droppedTracks = TrackTransfer.tracks(from: droppedStrings, in: tracks)
             appState.playlistManager.addTracks(droppedTracks, to: playlist, modelContext: modelContext)
-            return !droppedTracks.isEmpty
-        } isTargeted: { targeted in
-            isDropTargeted = targeted
-        }
+            appState.playlistManager.completeMove(
+                of: droppedTracks, fromPlaylistID: moveSource,
+                to: playlist, modelContext: modelContext
+            )
+        })
         .contextMenu {
             if !appState.isPerformanceMode {
                 Button("Delete Playlist", role: .destructive) {

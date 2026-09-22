@@ -82,12 +82,15 @@ struct PlaylistWindowView: View {
                             description: Text("Drag from Library to add tracks.")
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .dropDestination(for: String.self) { droppedStrings, _ in
+                        .onDrop(of: [.utf8PlainText], delegate: TrackDropDelegate { droppedStrings, moveSource in
                             let allTracks = (try? modelContext.fetch(FetchDescriptor<Track>())) ?? []
                             let droppedTracks = TrackTransfer.tracks(from: droppedStrings, in: allTracks)
                             appState.playlistManager.addTracks(droppedTracks, to: playlist, modelContext: modelContext)
-                            return !droppedTracks.isEmpty
-                        }
+                            appState.playlistManager.completeMove(
+                                of: droppedTracks, fromPlaylistID: moveSource,
+                                to: playlist, modelContext: modelContext
+                            )
+                        })
                     } else {
                         trackList(tracks, playlist: playlist)
                     }
@@ -165,7 +168,7 @@ struct PlaylistWindowView: View {
             let isActivePlaylist = appState.isPerformanceMode && appState.performingPlaylistID == playlist.id
             ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
                 PlaylistTrackRow(track: track, index: index, isCurrentlyPlaying: isActivePlaylist && appState.mainPlayback.currentTrack?.id == track.id, isActivePlaylist: isActivePlaylist)
-                    .draggable(TrackTransfer.encode(trackIDs: [track.id]))
+                    .draggable(TrackTransfer.beginDrag(trackIDs: [track.id], from: playlist.id))
                     .tag(track.id)
                     .id(track.id)
                     .contextMenu {
@@ -186,18 +189,38 @@ struct PlaylistWindowView: View {
             }
         }
         .listStyle(.inset(alternatesRowBackgrounds: false))
+        .onDeleteCommand {
+            removeSelectedTrack(tracks: tracks, playlist: playlist)
+        }
+    }
+
+    private func removeSelectedTrack(tracks: [Track], playlist: Playlist) {
+        guard let selectedID = selectedTrackID,
+              let index = tracks.firstIndex(where: { $0.id == selectedID }) else { return }
+        // Move the selection to the row that takes this one's place, so
+        // repeated presses remove consecutive tracks.
+        if index + 1 < tracks.count {
+            selectedTrackID = tracks[index + 1].id
+        } else if index > 0 {
+            selectedTrackID = tracks[index - 1].id
+        } else {
+            selectedTrackID = nil
+        }
+        appState.playlistManager.removeTrack(at: index, from: playlist, modelContext: modelContext)
     }
 
     private func handleInsert(at index: Int, providers: [NSItemProvider], playlist: Playlist) {
-        for provider in providers {
-            provider.loadObject(ofClass: NSString.self) { item, _ in
-                guard let string = item as? String else { return }
-                DispatchQueue.main.async {
-                    let allTracks = (try? modelContext.fetch(FetchDescriptor<Track>())) ?? []
-                    let droppedTracks = TrackTransfer.tracks(from: [string], in: allTracks)
-                    appState.playlistManager.insertTracks(droppedTracks, at: index, into: playlist)
-                }
-            }
+        // Capture move-vs-copy now — the provider callback is async and the
+        // user may have changed the Option key by the time it fires.
+        let moveSource = TrackDragOperation.takeMoveSource()
+        TrackTransfer.loadStrings(from: providers) { strings in
+            let allTracks = (try? modelContext.fetch(FetchDescriptor<Track>())) ?? []
+            let droppedTracks = TrackTransfer.tracks(from: strings, in: allTracks)
+            appState.playlistManager.insertTracks(droppedTracks, at: index, into: playlist)
+            appState.playlistManager.completeMove(
+                of: droppedTracks, fromPlaylistID: moveSource,
+                to: playlist, modelContext: modelContext
+            )
         }
     }
 
@@ -561,29 +584,36 @@ private struct PlaylistTrackRow: View {
             TrackArtworkView(data: track.artworkData, size: 28)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(track.title)
-                    .font(.body)
-                    .fontWeight(isCurrentlyPlaying ? .semibold : .regular)
-                    .lineLimit(1)
+                // Tags sit next to the title so every row keeps the same height.
+                HStack(spacing: 5) {
+                    Text(track.title)
+                        .font(.body)
+                        .fontWeight(isCurrentlyPlaying ? .semibold : .regular)
+                        .lineLimit(1)
+
+                    if !track.tags.isEmpty {
+                        HStack(spacing: 3) {
+                            ForEach(track.tags, id: \.self) { tag in
+                                Text(tag)
+                                    .font(.system(size: 9))
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 1)
+                                    .background(Capsule().fill(Color.accentColor.opacity(0.18)))
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                }
 
                 if !track.artist.isEmpty {
                     Text(track.artist)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                }
-
-                if !track.tags.isEmpty {
-                    HStack(spacing: 3) {
-                        ForEach(track.tags, id: \.self) { tag in
-                            Text(tag)
-                                .font(.system(size: 9))
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.accentColor.opacity(0.18)))
-                                .lineLimit(1)
-                        }
-                    }
+                } else {
+                    // Keeps rows without an artist the same height as rows with one.
+                    Text(" ")
+                        .font(.caption)
                 }
             }
             .frame(minWidth: 100, alignment: .leading)

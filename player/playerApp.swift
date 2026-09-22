@@ -12,6 +12,10 @@ import SwiftUI
 struct playerApp: App {
     @State private var appState = AppState()
 
+    init() {
+        TrackDragOperation.installListDropBadge()
+    }
+
     var body: some Scene {
         // Library window — the main/default window
         Window("Library", id: "library") {
