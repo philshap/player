@@ -1,10 +1,10 @@
-# Portable Library Feature
+# Portable Library
 
 ## Goal
 
 Bundle the app, SwiftData library, and all referenced audio files into a single folder on a removable drive, so the library can be built on one Mac and used for performance on another.
 
-## Chosen Approach: Portable Library Folder
+## Design: Portable Library Folder
 
 One self-contained folder holds everything:
 
@@ -22,88 +22,31 @@ One self-contained folder holds everything:
 
 The app is document-oriented at the folder level: it opens (or creates) a library folder and reads everything from it. The same folder on a USB drive works on any Mac.
 
----
-
 ## Key Design Decisions
 
 ### 1. Relative paths instead of absolute URLs
 
-`Track.fileURL` currently stores an absolute URL (`/Users/phil/Music/...`). This breaks on another machine.
+Tracks store a path relative to the library folder root (e.g. `Music/Artist - Title.mp3`) in `Track.relativePath`. An absolute URL would break when the drive mounts at a different path or on another machine.
 
-**Change:** Store a path relative to the library folder root, e.g. `Music/Artist - Title.mp3`.
-
-`Track.accessibleURL()` resolves this against the current library folder URL:
-```swift
-libraryFolderURL.appending(path: track.relativePath)
-```
+`Track.accessibleURL(libraryFolderURL:)` resolves the relative path against the currently open library folder at runtime.
 
 ### 2. Single folder-level security-scoped bookmark
 
-Currently each `Track` holds its own `bookmarkData` (a per-file security-scoped bookmark). These are fragile across machines and paths.
+One bookmark for the library folder itself is stored in `UserDefaults` (`"libraryFolderBookmark"`). All file access is relative to this folder — no fragile per-track bookmarks.
 
-**Change:** One bookmark for the library folder itself, stored in `UserDefaults`. All file access is relative to this folder — no per-track bookmarks needed.
+On launch, the bookmark is resolved and `startAccessingSecurityScopedResource()` is called once for the folder; every track file inside is then readable.
 
-```swift
-// On open:
-let folderURL = resolveLibraryFolderBookmark()
-folderURL.startAccessingSecurityScopedResource()
-// All track file I/O works without further bookmarks
-```
+### 3. SwiftData store inside the library folder
 
-### 3. SwiftData store at a configurable URL
-
-Currently the store lives in `~/Library/Application Support/` (default container). 
-
-**Change:** Pass an explicit URL to `ModelConfiguration`:
-```swift
-ModelConfiguration(url: libraryFolderURL.appending(path: "library.sqlite"))
-```
-
-This means the database travels with the audio files.
+The store URL is passed explicitly to `ModelConfiguration` (`libraryFolderURL/library.sqlite`) instead of using the default Application Support container, so the database travels with the audio files.
 
 ### 4. Copy-on-import
 
 When the user adds tracks, the app **copies** the audio file into `Music/` before creating the `Track` record. The source file is untouched; the library always owns its own copy.
 
-- Duplicate filenames: append a counter suffix (`Track (2).mp3`)
-- Large files: show progress (can be async with a Task)
-
-
-WHen the user deletes tracks, the app copy of the track is moved to the trash.
-
-The library view also shows the total disk space free.
-
----
-
-## Required Code Changes
-
-### `Models.swift`
-- Add `var relativePath: String` to `Track` (replaces meaningful use of `fileURL`)
-- Keep `fileURL` or repurpose it for display; remove `bookmarkData`
-
-### `playerApp.swift` / `AppState.swift`
-- On launch: if no library folder bookmark exists, show "New Library" / "Open Library" panel
-- Store folder bookmark in `UserDefaults`
-- Resolve bookmark and call `startAccessingSecurityScopedResource()` for the folder
-- Pass resolved folder URL into the SwiftData container and all managers
-
-### `LibraryManager.swift`
-- `importTracks(urls:)`: copy each file to `libraryFolder/Music/`, store relative path
-- Remove bookmark-creation logic (no longer needed)
-- Add `relocateLibrary(to:)` for moving an existing library folder
-
-### `Track.accessibleURL()`
-- Resolve `relativePath` against `AppState.libraryFolderURL`
-- Remove `resolveBookmark()` — no longer needed
-
-### `TrackMetadataEditorView.swift`
-- No changes needed (edits metadata fields only)
-
-### App entitlements
-- Keep `com.apple.security.files.user-selected.read-write` (already present)
-- The single folder grant covers all file access within it
-
----
+- Duplicate filenames get a counter suffix (`Track (2).mp3`)
+- When the user deletes a track, the library's copy is moved to the trash
+- The library window footer shows the free disk space on the library volume
 
 ## Launch / Onboarding Flow
 
@@ -122,16 +65,12 @@ App launches
     │                                   store bookmark → proceed as above
 ```
 
----
-
 ## App Distribution
 
-Since the app is signed with your Apple Developer certificate, it runs on any Mac you own:
-- First launch on the new machine: Gatekeeper shows "cannot verify developer" 
+Since the app is signed with a personal Apple Developer certificate, it runs on any Mac you own:
+- First launch on a new machine: Gatekeeper shows "cannot verify developer"
 - Fix: System Settings → Privacy & Security → "Open Anyway" (once per machine)
 - Or: notarize the app via Xcode Organizer for a cleaner experience
-
----
 
 ## Out of Scope
 

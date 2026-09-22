@@ -29,6 +29,7 @@ Open `player.xcodeproj` in Xcode for interactive development and UI work.
 - `PreviewPlaybackController` — cue/preview playback (right channel)
 - `LibraryManager` — file import and metadata
 - `PlaylistManager` — playlist CRUD and track ordering
+- `SystemVolumeController` — observes/adjusts the macOS output volume via CoreAudio
 
 The SwiftData `ModelContainer` and `libraryFolderURL` live in `AppState` and are only valid after the user opens a library. Views guard on `appState.isLibraryReady` before showing content.
 

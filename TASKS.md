@@ -1,6 +1,6 @@
 # Player - Remaining Tasks
 
-Organized by difficulty and importance. See TASKS-DONE.md for completed work.
+Organized by difficulty and importance. Completed work lives in the git history.
 
 
 ## High Priority
@@ -13,13 +13,11 @@ _(nothing remaining)_
 
 ### Misc
 
+- use playback API so OS play/pause works, airplay works, etc
+- loudness normalization: analyze track loudness (EBU R128 / ReplayGain style) on import and apply per-track gain so all tracks play at the same level — would remove the need to ride the system volume between tracks
 - allow multiple selection in playlist window, for bulk drag and remove operations
-- preview player album art display overlaps left-hand time display
-
-### Unify playlist playback UX with player UX
-  - use player's main controller view directly in playlist, or provide same UI
-  - need to add Gap dropdown and gap timing display to player view
-
+- preview player album art display overlaps left-hand time display; player window UX is still not great, some contrast / display issues involving BPM
+- playlist text "jumps" when scrollbar is shown/hidden due to window resizing
 
 ### Composite filtering in Library
 - use a filter rule to limit library view, which can combine text search, tags and other attribute filters

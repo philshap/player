@@ -3,5 +3,7 @@ DerivedData/
 xcuserdata/
 .claude/
 *~
+\#*\#
+.\#*
 .idea/
 build/

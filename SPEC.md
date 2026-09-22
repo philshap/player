@@ -7,14 +7,14 @@ A DJ-oriented audio player for macOS (iOS later) focused on playlist curation an
 ## Platform
 
 - macOS first (multi-window)
-- iOS planned for later (UI TBD)
+- iOS planned for later — see [IOS.md](IOS.md)
 
 ## Core Concepts
 
 ### Library
 - The app maintains its own music library, independent of the system music library
 - Users import local audio files into the library; files are copied into the library folder on import
-- Library stores and displays track metadata (title, artist, album, genre, BPM, duration, etc.)
+- Library stores and displays track metadata (title, artist, album, BPM, rating, tags, duration, etc.)
 - Library is searchable and sortable by metadata fields
 - The library is a self-contained folder (SQLite store + Music/ subfolder) that can be placed on a USB drive and used on any Mac — see [PORTABLE-LIBRARY.md](PORTABLE-LIBRARY.md) for the full design
 
@@ -67,8 +67,9 @@ The primary concern is preventing accidental modifications during live playback 
 ## macOS UI (Multi-Window)
 
 ### Library Window
-- Displays all tracks in the library with metadata columns (art, title, artist, album, BPM, rating, duration, play count, last played, cue points)
-- Search bar for filtering by metadata
+- Displays all tracks in the library with metadata columns (art, title, artist, album, BPM, rating, tags, duration, play count, last played, cue points)
+- Search bar for filtering by metadata (also matches tag names)
+- Tag filter bar above the table — toggle buttons per tag, AND-logic for multi-tag selection
 - Import button / drag-and-drop to add files
 - Context menu: add to playlist, load in preview, set/clear cue points, detect BPM, edit metadata, delete
 - Sortable columns; sort ignores leading "The" in title and album
@@ -77,16 +78,21 @@ The primary concern is preventing accidental modifications during live playback 
 
 ### Player Window
 - Shows currently playing track info (title, artist, album art)
-- Playback controls (play, pause, stop, next, previous, restart, seek bar)
+- Playback controls (play, pause, stop, next, previous, restart)
+- Waveform seek bar with click-to-seek on both decks; level meter on the main deck
 - Preview/cue section with its own controls and track info
 - Channel routing toggle per output (left-only vs. both channels)
 - Volume control for preview
+- System volume control on the main deck — slider plus 1/64-step buttons for micro-adjusting the Mac's output volume (hidden when the output device has no volume control, e.g. HDMI)
 
 ### Playlist Windows
 - Each playlist opens in its own window
-- Ordered track list with metadata columns (art, title, artist, BPM, rating, play count, duration, cue point indicators)
+- Ordered track list with metadata columns (art, title, artist, tags, BPM, rating, play count, duration, cue point indicators); tags shown as chips next to the title so all rows keep a uniform height
+- Collapsible BPM-over-set-position graph above the track list (hover for track details, click to select)
 - Drag-and-drop reordering within playlist
 - Drag-and-drop from library into playlist (including during performance mode)
+- Option-drag a track onto another playlist to move it there instead of copying
+- Delete key removes the selected track from the playlist
 - Context menu: play from here, load in preview, jump to cue in, clear cue points, remove
 - Progress bar background on currently playing track
 - Playlist statistics footer: track count, total duration, BPM range/avg, average rating, unplayed count
@@ -109,7 +115,7 @@ The primary concern is preventing accidental modifications during live playback 
 ### Track
 - Relative path within the library folder (resolved at runtime against the library folder URL)
 - Title, artist, album
-- Genre
+- Tags (free-form strings; editable in the metadata editor with autocomplete from existing tags)
 - Duration
 - BPM (auto-detected on import via energy-envelope autocorrelation if not in file tags; editable)
 - Date added
@@ -149,9 +155,8 @@ The primary concern is preventing accidental modifications during live playback 
 ## Nice-to-Have Features (not required for v1)
 
 - Crossfade between playlist tracks
-- Waveform display for tracks
-- Audio level / VU meter display
 - External soundcard routing (e.g. USB devices like Traktor Audio 2)
+- Loudness normalization (EBU R128 / ReplayGain-style per-track gain)
 
 ## Out of Scope
 
